@@ -16,7 +16,7 @@ type MonitorActor struct {
 	monitoring bool
 	interval   time.Duration
 	stopCh     chan struct{}
-	// Ya no necesitamos un DomainChecker fijo
+	startedAt  time.Time
 }
 
 func NewMonitorActor(repo *repositories.InMemoryDomainRepository) actor.Producer {
@@ -33,7 +33,6 @@ func (m *MonitorActor) Receive(c *actor.Context) {
 	switch msg := c.Message().(type) {
 	case actor.Started:
 		slog.Info("MonitorActor started", "pid", c.PID())
-		// Ya no creamos un DomainChecker fijo
 
 	case StartMonitoring:
 		m.handleStartMonitoring(c, msg)
@@ -52,6 +51,9 @@ func (m *MonitorActor) Receive(c *actor.Context) {
 
 	case Alert:
 		m.handleAlert(c, msg)
+
+	case GetMonitoringStatus: // ✅ NUEVO: Obtener estado
+		m.handleGetMonitoringStatus(c)
 
 	case GetStatus:
 		m.handleGetStatus(c)
@@ -124,16 +126,35 @@ func (m *MonitorActor) handleCheckSingleDomain(c *actor.Context, msg CheckDomain
 
 func (m *MonitorActor) handleStartMonitoring(c *actor.Context, msg StartMonitoring) {
 	if m.monitoring {
-		slog.Warn("Monitoring already started")
+		slog.Warn("Monitoring already started", "interval", m.interval)
+		// Responder que ya está corriendo
+		if c.Sender() != nil {
+			c.Send(c.Sender(), MonitoringStatus{
+				IsRunning: true,
+				Interval:  m.interval,
+				StartedAt: m.startedAt,
+				Message:   "Monitoring already running",
+			})
+		}
 		return
 	}
 
 	m.interval = time.Duration(msg.Interval) * time.Second
 	m.monitoring = true
+	m.startedAt = time.Now()
 
 	slog.Info("Starting concurrent domain monitoring", "interval", m.interval)
 
 	go m.monitoringLoop(c)
+	// Responder éxito
+	if c.Sender() != nil {
+		c.Send(c.Sender(), MonitoringStatus{
+			IsRunning: true,
+			Interval:  m.interval,
+			StartedAt: m.startedAt,
+			Message:   "Monitoring started",
+		})
+	}
 }
 
 func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
@@ -142,7 +163,36 @@ func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 		m.monitoring = false
 		close(m.stopCh)
 		m.stopCh = make(chan struct{})
+
+		// Responder éxito si hay un solicitante
+		if c.Sender() != nil {
+			c.Send(c.Sender(), MonitoringStatus{
+				IsRunning: false,
+				Interval:  0,
+				Message:   "Monitoring stopped",
+			})
+		}
+	} else if c.Sender() != nil {
+		// Ya está detenido
+		c.Send(c.Sender(), MonitoringStatus{
+			IsRunning: false,
+			Interval:  0,
+			Message:   "Monitoring already stopped",
+		})
 	}
+}
+
+func (m *MonitorActor) handleGetMonitoringStatus(c *actor.Context) {
+	status := MonitoringStatus{
+		IsRunning: m.monitoring,
+		Interval:  m.interval,
+	}
+
+	if m.monitoring {
+		status.StartedAt = m.startedAt
+	}
+
+	c.Send(c.Sender(), status)
 }
 
 func (m *MonitorActor) monitoringLoop(c *actor.Context) {
