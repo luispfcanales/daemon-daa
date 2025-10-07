@@ -4,35 +4,33 @@ import (
 	"net/http"
 
 	"github.com/anthdm/hollywood/actor"
+	"github.com/luispfcanales/daemon-daa/internal/application/events"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 )
 
-// Router configura las rutas del API
 type Router struct {
 	handler *APIHandler
 }
 
-func NewRouter(engine *actor.Engine, monitorPID *actor.PID, iisService *services.IISService) *Router {
+func NewRouter(engine *actor.Engine, monitorPID *actor.PID, iisService *services.IISService, eventBus *events.EventBus) *Router {
 	return &Router{
-		handler: NewAPIHandler(engine, monitorPID, iisService),
+		handler: NewAPIHandler(engine, monitorPID, iisService, eventBus),
 	}
 }
 
-// SetupRoutes configura todas las rutas del API
 func (r *Router) SetupRoutes() *http.ServeMux {
 	mux := http.NewServeMux()
 
-	// Rutas del API
+	// Eventos en tiempo real
+	mux.HandleFunc("GET /monitoring/events", r.handler.MonitoringEvents)
+
+	// Control del sistema
 	mux.HandleFunc("POST /monitoring/control", r.handler.ControlMonitoring)
 	mux.HandleFunc("POST /iis/control", r.handler.ControlIIS)
 	mux.HandleFunc("GET /iis/sites", r.handler.GetIISSites)
 
+	// Ruta por defecto
 	mux.HandleFunc("/", r.handler.NotFound)
 
 	return mux
-}
-
-// NotFound maneja rutas no encontradas
-func (h *APIHandler) NotFound(w http.ResponseWriter, r *http.Request) {
-	h.sendError(w, "Ruta no encontrada", http.StatusNotFound)
 }

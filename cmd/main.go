@@ -11,6 +11,7 @@ import (
 
 	"github.com/luispfcanales/daemon-daa/internal/application/actors"
 	"github.com/luispfcanales/daemon-daa/internal/application/api"
+	"github.com/luispfcanales/daemon-daa/internal/application/events"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/repositories"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 
@@ -29,6 +30,7 @@ func main() {
 	// Crear repositorio
 	repo := repositories.NewInMemoryDomainRepository()
 
+	eventBus := events.NewEventBus()
 	iisService := services.NewIISService()
 
 	// Configurar el engine de Hollywood
@@ -46,16 +48,14 @@ func main() {
 	engine.Subscribe(loggerPID)
 
 	// Configurar y iniciar servidor HTTP
-	router := api.NewRouter(engine, monitorPID, iisService)
+	router := api.NewRouter(engine, monitorPID, iisService, eventBus)
 	mux := router.SetupRoutes()
 
 	handler := api.CorsMiddleware(api.LoggingMiddleware(mux))
 	server := &http.Server{
-		Addr:         ":8080",
-		Handler:      handler,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        ":8080",
+		Handler:     handler,
+		IdleTimeout: 120 * time.Second,
 	}
 	// Iniciar servidor HTTP en goroutine
 	go func() {

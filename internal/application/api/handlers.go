@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/luispfcanales/daemon-daa/internal/application/actors"
+	"github.com/luispfcanales/daemon-daa/internal/application/events"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 
 	"github.com/anthdm/hollywood/actor"
@@ -17,50 +19,157 @@ type APIHandler struct {
 	engine     *actor.Engine
 	monitorPID *actor.PID
 	iisService *services.IISService
+	eventBus   *events.EventBus
 }
 
-func NewAPIHandler(engine *actor.Engine, monitorPID *actor.PID, iisService *services.IISService) *APIHandler {
+func NewAPIHandler(engine *actor.Engine, monitorPID *actor.PID, iisService *services.IISService, eventBus *events.EventBus) *APIHandler {
 	return &APIHandler{
 		engine:     engine,
 		monitorPID: monitorPID,
 		iisService: iisService,
+		eventBus:   eventBus,
 	}
 }
 
-// Estructuras de request/response
 type MonitoringControlRequest struct {
-	Action   string `json:"action"`             // "start", "stop", "status"
-	Interval int    `json:"interval,omitempty"` // segundos, solo para "start"
+	Action   string `json:"action"`
+	Interval int    `json:"interval,omitempty"`
 }
 
-// IISControlRequest representa la solicitud para controlar IIS
 type IISControlRequest struct {
 	SiteName string `json:"site_name"`
-	Action   string `json:"action"` // "start", "stop", "restart"
+	Action   string `json:"action"`
 }
 
-// IISControlResponse representa la respuesta del control IIS
-type IISControlResponse struct {
-	Success   bool      `json:"success"`
-	Action    string    `json:"action"`
-	Message   string    `json:"message"`
-	Output    string    `json:"output,omitempty"`
-	Error     string    `json:"error,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// DomainCheckResponse representa la respuesta de verificación de dominios
-type DomainCheckResponse struct {
-	Success   bool        `json:"success"`
-	Message   string      `json:"message"`
-	Results   interface{} `json:"results,omitempty"`
-	Timestamp time.Time   `json:"timestamp"`
-}
-
-// ErrorResponse representa una respuesta de error
 type ErrorResponse struct {
 	Error     string    `json:"error"`
 	Timestamp time.Time `json:"timestamp"`
+}
+
+// MonitoringEvents maneja las conexiones SSE para monitoreo en tiempo real
+func (h *APIHandler) MonitoringEvents(w http.ResponseWriter, r *http.Request) {
+	// Configurar headers para SSE
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "SSE no soportado", http.StatusInternalServerError)
+		return
+	}
+
+	// Notificar conexión inmediatamente
+	connectedEvent := events.Event{
+		Type:      "connected",
+		Data:      map[string]interface{}{"status": "connected"},
+		Timestamp: time.Now(),
+	}
+	if data, err := json.Marshal(connectedEvent); err == nil {
+		fmt.Fprintf(w, "data: %s\n\n", data)
+		flusher.Flush()
+	}
+
+	// Suscribir cliente
+	client := h.eventBus.Subscribe()
+	defer func() {
+		h.eventBus.Unsubscribe(client)
+		slog.Info("Cliente SSE desconectado", "remote_addr", r.RemoteAddr)
+	}()
+
+	slog.Info("Cliente SSE conectado", "remote_addr", r.RemoteAddr)
+
+	// Crear contexto con timeout para obtener estado inicial
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	// Enviar estado inicial
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+
+		if status, err := h.getCurrentMonitoringStatusWithContext(ctx); err == nil {
+			initialEvent := events.Event{
+				Type: "initial_status",
+				Data: map[string]interface{}{
+					"is_running": status.IsRunning,
+					"interval":   int(status.Interval.Seconds()),
+				},
+				Timestamp: time.Now(),
+			}
+
+			// Enviar directamente al cliente
+			select {
+			case client <- initialEvent:
+				slog.Info("Estado inicial enviado", "is_running", status.IsRunning)
+			default:
+				slog.Warn("No se pudo enviar estado inicial (cliente ocupado)")
+			}
+		} else {
+			slog.Error("Error obteniendo estado inicial", "error", err)
+		}
+	}()
+
+	// Heartbeat ticker
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// Loop principal
+	done := r.Context().Done()
+
+	for {
+		select {
+		case event, ok := <-client:
+			if !ok {
+				slog.Info("Canal cerrado")
+				return
+			}
+
+			data, err := json.Marshal(event)
+			if err != nil {
+				slog.Error("Error serializando evento", "error", err)
+				continue
+			}
+
+			n, err := fmt.Fprintf(w, "data: %s\n\n", data)
+			if err != nil || n == 0 {
+				slog.Error("Error escribiendo evento", "error", err)
+				return
+			}
+
+			flusher.Flush()
+
+		case <-ticker.C:
+			n, err := fmt.Fprintf(w, ": heartbeat\n\n")
+			if err != nil || n == 0 {
+				slog.Error("Error enviando heartbeat", "error", err)
+				return
+			}
+			flusher.Flush()
+
+		case <-done:
+			slog.Info("Cliente cerró conexión", "remote_addr", r.RemoteAddr)
+			return
+		}
+	}
+}
+
+// getCurrentMonitoringStatusWithContext obtiene el estado con contexto
+func (h *APIHandler) getCurrentMonitoringStatusWithContext(ctx context.Context) (*actors.MonitoringStatus, error) {
+	future := h.engine.Request(h.monitorPID, actors.GetMonitoringStatus{}, 2*time.Second)
+
+	result, err := future.Result()
+	if err != nil {
+		return nil, fmt.Errorf("error obteniendo estado: %v", err)
+	}
+
+	if status, ok := result.(actors.MonitoringStatus); ok {
+		return &status, nil
+	}
+
+	return nil, fmt.Errorf("tipo de respuesta inesperado")
 }
 
 func (h *APIHandler) ControlMonitoring(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +184,6 @@ func (h *APIHandler) ControlMonitoring(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. PRIMERO obtener estado actual
 	currentStatus, err := h.getCurrentMonitoringStatus()
 	if err != nil {
 		h.sendError(w, fmt.Sprintf("Error verificando estado: %v", err), http.StatusInternalServerError)
@@ -94,13 +202,11 @@ func (h *APIHandler) ControlMonitoring(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ✅ Iniciar monitoreo
 func (h *APIHandler) handleStartWithCheck(w http.ResponseWriter, interval int, currentStatus *actors.MonitoringStatus) {
 	if interval <= 0 {
 		interval = 30
 	}
 
-	// Verificar si ya está ejecutándose
 	if currentStatus.IsRunning {
 		response := map[string]interface{}{
 			"success":    false,
@@ -115,28 +221,36 @@ func (h *APIHandler) handleStartWithCheck(w http.ResponseWriter, interval int, c
 			response["running_for"] = time.Since(currentStatus.StartedAt).String()
 		}
 
-		slog.Warn("Intento de iniciar monitoreo que ya está ejecutándose")
+		slog.Warn("Intento de iniciar monitoreo activo")
 		h.sendJSON(w, response, http.StatusConflict)
 		return
 	}
 
-	// Iniciar monitoreo
 	slog.Info("Iniciando monitoreo", "interval", interval)
 	h.engine.Send(h.monitorPID, actors.StartMonitoring{Interval: interval})
 
+	h.eventBus.Broadcast(events.Event{
+		Type: "monitoring_started",
+		Data: map[string]interface{}{
+			"interval":   interval,
+			"is_running": true,
+			"message":    fmt.Sprintf("✅ Monitoreo iniciado cada %d segundos", interval),
+		},
+		Timestamp: time.Now(),
+	})
+
 	response := map[string]interface{}{
-		"success":  true,
-		"action":   "start",
-		"interval": interval,
-		"message":  fmt.Sprintf("✅ Monitoreo iniciado cada %d segundos", interval),
+		"success":    true,
+		"action":     "start",
+		"is_running": true,
+		"interval":   interval,
+		"message":    fmt.Sprintf("✅ Monitoreo iniciado cada %d segundos", interval),
 	}
 
 	h.sendJSON(w, response, http.StatusOK)
 }
 
-// ✅ Detener monitoreo
 func (h *APIHandler) handleStopWithCheck(w http.ResponseWriter, currentStatus *actors.MonitoringStatus) {
-	// Verificar si ya está detenido
 	if !currentStatus.IsRunning {
 		response := map[string]interface{}{
 			"success":    false,
@@ -145,19 +259,29 @@ func (h *APIHandler) handleStopWithCheck(w http.ResponseWriter, currentStatus *a
 			"message":    "❌ El monitoreo YA está detenido",
 		}
 
-		slog.Warn("Intento de detener monitoreo que ya está detenido")
+		slog.Warn("Intento de detener monitoreo inactivo")
 		h.sendJSON(w, response, http.StatusConflict)
 		return
 	}
 
-	// Detener monitoreo
 	slog.Info("Deteniendo monitoreo")
 	h.engine.Send(h.monitorPID, actors.StopMonitoring{})
 
+	h.eventBus.Broadcast(events.Event{
+		Type: "monitoring_stopped",
+		Data: map[string]interface{}{
+			"is_running": false,
+			"interval":   0,
+			"message":    "✅ Monitoreo detenido",
+		},
+		Timestamp: time.Now(),
+	})
+
 	response := map[string]interface{}{
-		"success": true,
-		"action":  "stop",
-		"message": "✅ Monitoreo detenido",
+		"success":    true,
+		"action":     "stop",
+		"is_running": false,
+		"message":    "✅ Monitoreo detenido",
 	}
 
 	h.sendJSON(w, response, http.StatusOK)
@@ -184,7 +308,6 @@ func (h *APIHandler) handleStatusResponse(w http.ResponseWriter, status *actors.
 }
 
 func (h *APIHandler) getCurrentMonitoringStatus() (*actors.MonitoringStatus, error) {
-	// Usar Request que es más confiable
 	future := h.engine.Request(h.monitorPID, actors.GetMonitoringStatus{}, 3*time.Second)
 
 	result, err := future.Result()
@@ -220,7 +343,6 @@ func (h *APIHandler) GetIISSites(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, response, http.StatusOK)
 }
 
-// ControlIIS maneja las solicitudes para controlar IIS
 func (h *APIHandler) ControlIIS(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.sendError(w, "Método no permitido", http.StatusMethodNotAllowed)
@@ -243,7 +365,7 @@ func (h *APIHandler) ControlIIS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("Control IIS request", "site", req.SiteName, "action", req.Action)
+	slog.Info("Control IIS", "site", req.SiteName, "action", req.Action)
 
 	result, err := h.iisService.ControlSite(req.SiteName, req.Action)
 	if err != nil {
@@ -254,17 +376,15 @@ func (h *APIHandler) ControlIIS(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, result, http.StatusOK)
 }
 
-// sendJSON envía una respuesta JSON
 func (h *APIHandler) sendJSON(w http.ResponseWriter, data interface{}, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 
 	if err := json.NewEncoder(w).Encode(data); err != nil {
-		slog.Error("Error encoding JSON response", "error", err)
+		slog.Error("Error encoding JSON", "error", err)
 	}
 }
 
-// sendError envía una respuesta de error JSON
 func (h *APIHandler) sendError(w http.ResponseWriter, message string, statusCode int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
@@ -275,4 +395,8 @@ func (h *APIHandler) sendError(w http.ResponseWriter, message string, statusCode
 	}
 
 	json.NewEncoder(w).Encode(errorResponse)
+}
+
+func (h *APIHandler) NotFound(w http.ResponseWriter, r *http.Request) {
+	h.sendError(w, "Ruta no encontrada", http.StatusNotFound)
 }

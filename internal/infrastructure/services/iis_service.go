@@ -59,15 +59,20 @@ func (s *IISService) ControlSite(siteName string, action string) (map[string]int
 	case "stop":
 		commands = []string{
 			fmt.Sprintf("Stop-Website -Name \"%s\"", siteName),
+			fmt.Sprintf("Stop-WebAppPool -Name \"%s\"", siteName),
 		}
 	case "start":
 		commands = []string{
+			fmt.Sprintf("Start-WebAppPool -Name \"%s\"", siteName),
 			fmt.Sprintf("Start-Website -Name \"%s\"", siteName),
 		}
 	case "restart":
 		commands = []string{
 			fmt.Sprintf("Stop-Website -Name \"%s\"", siteName),
+			fmt.Sprintf("Stop-WebAppPool -Name \"%s\"", siteName),
 			"Start-Sleep -Seconds 2",
+			fmt.Sprintf("Start-WebAppPool -Name \"%s\"", siteName),
+			"Start-Sleep -Seconds 1",
 			fmt.Sprintf("Start-Website -Name \"%s\"", siteName),
 		}
 	default:
