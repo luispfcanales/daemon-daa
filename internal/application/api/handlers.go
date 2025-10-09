@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -82,42 +83,16 @@ func (h *APIHandler) MonitoringEvents(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Cliente SSE conectado", "remote_addr", r.RemoteAddr)
 
-	// Crear contexto con timeout para obtener estado inicial
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
+	//request context
+	ctx := r.Context()
 
 	// Enviar estado inicial
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-
-		if status, err := h.getCurrentMonitoringStatusWithContext(ctx); err == nil {
-			initialEvent := events.Event{
-				Type: "initial_status",
-				Data: map[string]interface{}{
-					"is_running": status.IsRunning,
-					"interval":   int(status.Interval.Seconds()),
-				},
-				Timestamp: time.Now(),
-			}
-
-			// Enviar directamente al cliente
-			select {
-			case client <- initialEvent:
-				slog.Info("Estado inicial enviado", "is_running", status.IsRunning)
-			default:
-				slog.Warn("No se pudo enviar estado inicial (cliente ocupado)")
-			}
-		} else {
-			slog.Error("Error obteniendo estado inicial", "error", err)
-		}
-	}()
+	go h.currentStatus(ctx, client)
+	go h.sitesWithContext(ctx, client)
 
 	// Heartbeat ticker
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
-	// Loop principal
-	done := r.Context().Done()
 
 	for {
 		select {
@@ -149,27 +124,80 @@ func (h *APIHandler) MonitoringEvents(w http.ResponseWriter, r *http.Request) {
 			}
 			flusher.Flush()
 
-		case <-done:
+		case <-ctx.Done():
 			slog.Info("Cliente cerró conexión", "remote_addr", r.RemoteAddr)
 			return
 		}
 	}
 }
 
-// getCurrentMonitoringStatusWithContext obtiene el estado con contexto
-func (h *APIHandler) getCurrentMonitoringStatusWithContext(ctx context.Context) (*actors.MonitoringStatus, error) {
-	future := h.engine.Request(h.monitorPID, actors.GetMonitoringStatus{}, 2*time.Second)
+func (h *APIHandler) sitesWithContext(ctx context.Context, client chan<- events.Event) {
+	// Pequeño delay para estabilizar la conexión
+	select {
+	case <-time.After(60 * time.Millisecond):
+		// Continuar normalmente
+	case <-ctx.Done():
+		slog.Info("Cliente desconectado durante delay inicial")
+		return
+	}
 
-	result, err := future.Result()
+	sites, err := h.iisService.GetAllSitesWithContext(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("error obteniendo estado: %v", err)
+		if errors.Is(err, context.Canceled) {
+			slog.Info("Cliente desconectado durante obtención de sitios IIS")
+			return
+		}
+		//send
+		return
 	}
 
-	if status, ok := result.(actors.MonitoringStatus); ok {
-		return &status, nil
+	webSites := events.Event{
+		Type: "websites_list",
+		Data: map[string]interface{}{
+			"success": true,
+			"sites":   sites,
+			"count":   len(sites),
+		},
+		Timestamp: time.Now(),
+	}
+	client <- webSites
+}
+
+func (h *APIHandler) currentStatus(ctx context.Context, client chan<- events.Event) {
+	// Pequeño delay para estabilizar la conexión
+	select {
+	case <-time.After(50 * time.Millisecond):
+		// Continuar normalmente
+	case <-ctx.Done():
+		slog.Info("Cliente desconectado durante delay inicial")
+		return
 	}
 
-	return nil, fmt.Errorf("tipo de respuesta inesperado")
+	// Obtener estado con timeout controlado
+	status, err := h.getCurrentMonitoringStatus()
+	if err != nil {
+		slog.Error("Error obteniendo estado inicial", "error", err)
+		return
+	}
+
+	initialEvent := events.Event{
+		Type: "initial_status",
+		Data: map[string]interface{}{
+			"is_running": status.IsRunning,
+			"interval":   int(status.Interval.Seconds()),
+		},
+		Timestamp: time.Now(),
+	}
+
+	// Intentar enviar al cliente con verificación de contexto
+	select {
+	case client <- initialEvent:
+		slog.Info("Estado inicial enviado", "is_running", status.IsRunning)
+	case <-ctx.Done():
+		slog.Info("Cliente desconectado durante envío de estado inicial")
+	default:
+		slog.Warn("No se pudo enviar estado inicial (cliente ocupado)")
+	}
 }
 
 func (h *APIHandler) ControlMonitoring(w http.ResponseWriter, r *http.Request) {

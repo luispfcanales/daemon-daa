@@ -6,20 +6,20 @@ import (
 	"time"
 
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
-	"github.com/luispfcanales/daemon-daa/internal/infrastructure/repositories"
+	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 
 	"github.com/anthdm/hollywood/actor"
 )
 
 type MonitorActor struct {
-	repository *repositories.InMemoryDomainRepository
+	repository ports.DomainRepository
 	monitoring bool
 	interval   time.Duration
 	stopCh     chan struct{}
 	startedAt  time.Time
 }
 
-func NewMonitorActor(repo *repositories.InMemoryDomainRepository) actor.Producer {
+func NewMonitorActor(repo ports.DomainRepository) actor.Producer {
 	return func() actor.Receiver {
 		return &MonitorActor{
 			repository: repo,

@@ -2,7 +2,9 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"runtime"
@@ -25,11 +27,32 @@ func (s *IISService) GetAllSites() ([]map[string]interface{}, error) {
 	}
 
 	script := `
-        Get-IISSite | Select-Object Name, State, Id | ConvertTo-Json -Depth 2
-    `
+		Get-IISSite | Select-Object Name, State, Id, @{
+			Name="URL"; 
+			Expression={
+				$bindings = $_.Bindings | ForEach-Object {
+					$protocol = $_.Protocol
+					$bindingInfo = $_.BindingInformation
+					
+					$parts = $bindingInfo -split ':'
+					$ip = $parts[0]
+					$port = $parts[1]
+					$hostname = $parts[2]
+					
+					if ($hostname) {
+						"${protocol}://${hostname}:${port}"
+					} elseif ($ip -and $ip -ne "*") {
+						"${protocol}://${ip}:${port}"
+					} else {
+						"${protocol}://localhost:${port}"
+					}
+				}
+				$bindings -join ", "
+			}
+		} | ConvertTo-Json -Depth 3
+	`
 
 	cmd := exec.Command("powershell", "-Command", script)
-
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -39,7 +62,79 @@ func (s *IISService) GetAllSites() ([]map[string]interface{}, error) {
 		return nil, fmt.Errorf("error ejecutando PowerShell: %v - %s", err, stderr.String())
 	}
 
-	// Parsear el array JSON de sitios
+	var sites []map[string]interface{}
+	if err := json.Unmarshal([]byte(stdout.String()), &sites); err != nil {
+		return nil, fmt.Errorf("error parseando JSON: %v", err)
+	}
+
+	return sites, nil
+}
+
+func (s *IISService) GetAllSitesWithContext(ctx context.Context) ([]map[string]interface{}, error) {
+	if runtime.GOOS != "windows" {
+		return nil, fmt.Errorf("IIS solo disponible en Windows")
+	}
+
+	script := `
+		Get-IISSite | Select-Object Name, State, Id, @{
+			Name="URL"; 
+			Expression={
+				$bindings = $_.Bindings | ForEach-Object {
+					$protocol = $_.Protocol
+					$bindingInfo = $_.BindingInformation
+					
+					$parts = $bindingInfo -split ':'
+					$ip = $parts[0]
+					$port = $parts[1]
+					$hostname = $parts[2]
+					
+					if ($hostname) {
+						"${protocol}://${hostname}:${port}"
+					} elseif ($ip -and $ip -ne "*") {
+						"${protocol}://${ip}:${port}"
+					} else {
+						"${protocol}://localhost:${port}"
+					}
+				}
+				$bindings -join ", "
+			}
+		} | ConvertTo-Json -Depth 3
+	`
+
+	// Crear comando con contexto
+	cmd := exec.CommandContext(ctx, "powershell", "-Command", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Ejecutar en goroutine para mejor control
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Run()
+	}()
+
+	// Esperar por finalización o cancelación
+	select {
+	case err := <-done:
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return nil, context.Canceled
+			}
+			return nil, fmt.Errorf("error ejecutando PowerShell: %v - %s", err, stderr.String())
+		}
+	case <-ctx.Done():
+		// Intentar terminar el proceso más agresivamente
+		if cmd.Process != nil {
+			cmd.Process.Kill()
+		}
+		return nil, context.Canceled
+	}
+
+	// Verificar una última vez si el contexto fue cancelado
+	if ctx.Err() != nil {
+		return nil, context.Canceled
+	}
+
 	var sites []map[string]interface{}
 	if err := json.Unmarshal([]byte(stdout.String()), &sites); err != nil {
 		return nil, fmt.Errorf("error parseando JSON: %v", err)
