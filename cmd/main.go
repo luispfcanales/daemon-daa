@@ -28,7 +28,7 @@ func main() {
 	})))
 
 	// Crear repositorio
-	repo := repositories.NewInMemoryDomainRepository()
+	repocsv := repositories.NewCSVDomainRepository("domain_configs.csv", "domain_checks.csv")
 
 	eventBus := events.NewEventBus()
 	iisService := services.NewIISService()
@@ -41,7 +41,7 @@ func main() {
 	}
 
 	// Crear actores
-	monitorPID := engine.Spawn(actors.NewMonitorActor(repo), "monitor")
+	monitorPID := engine.Spawn(actors.NewMonitorActor(repocsv), "monitor")
 	loggerPID := engine.Spawn(actors.NewConsoleLogger(), "logger")
 
 	// Suscribir el logger a los eventos
@@ -53,7 +53,7 @@ func main() {
 
 	handler := api.CorsMiddleware(api.LoggingMiddleware(mux))
 	server := &http.Server{
-		Addr:        ":8080",
+		Addr:        "0.0.0.0:8080",
 		Handler:     handler,
 		IdleTimeout: 120 * time.Second,
 	}

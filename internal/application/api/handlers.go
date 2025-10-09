@@ -11,6 +11,7 @@ import (
 
 	"github.com/luispfcanales/daemon-daa/internal/application/actors"
 	"github.com/luispfcanales/daemon-daa/internal/application/events"
+	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 
 	"github.com/anthdm/hollywood/actor"
@@ -393,13 +394,64 @@ func (h *APIHandler) ControlIIS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var stateAction int
+	switch req.Action {
+	case "start":
+		stateAction = domain.IISStateStarting
+	case "stop":
+		stateAction = domain.IISStateStopping
+	case "restart":
+	}
+
+	//notificar inicio de control
+	h.eventBus.Broadcast(events.Event{
+		Type: "control_iis_site",
+		Data: map[string]domain.ControlSiteResult{
+			"iis_control": {
+				IISSite:       req.SiteName,
+				IISAction:     domain.GetIISStateName(stateAction),
+				IISOutput:     "Iniciando acción...",
+				IISSuccess:    false,
+				IISInProgress: true,
+			},
+		},
+		Timestamp: time.Now(),
+	})
+
 	slog.Info("Control IIS", "site", req.SiteName, "action", req.Action)
 
 	result, err := h.iisService.ControlSite(req.SiteName, req.Action)
 	if err != nil {
 		h.sendError(w, fmt.Sprintf("Error ejecutando comando: %v", err), http.StatusInternalServerError)
+		h.eventBus.Broadcast(events.Event{
+			Type: "control_iis_site",
+			Data: map[string]interface{}{
+				"iis_control": domain.ControlSiteResult{
+					IISSite:       req.SiteName,
+					IISAction:     "Error",
+					IISOutput:     err.Error(),
+					IISSuccess:    false,
+					IISInProgress: false,
+				},
+			},
+			Timestamp: time.Now(),
+		})
 		return
 	}
+
+	h.eventBus.Broadcast(events.Event{
+		Type: "control_iis_site",
+		Data: map[string]domain.ControlSiteResult{
+			"iis_control": {
+				IISSite:       result.IISSite,
+				IISAction:     result.IISAction,
+				IISOutput:     result.IISOutput,
+				IISSuccess:    result.IISSuccess,
+				IISInProgress: false,
+			},
+		},
+		Timestamp: time.Now(),
+	})
 
 	h.sendJSON(w, result, http.StatusOK)
 }

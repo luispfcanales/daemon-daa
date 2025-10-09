@@ -10,10 +10,20 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 )
 
+// Estructuras para el parseo JSON
+type PowerShellStateResult struct {
+	WebsiteState string `json:"website_state"`
+	AppPoolState string `json:"apppool_state"`
+	SiteName     string `json:"site_name"`
+	Success      bool   `json:"success"`
+	Error        string `json:"error,omitempty"`
+}
+
 type IISService struct {
-	// ❌ ELIMINAR: websiteName y appPoolName fijos
 }
 
 func NewIISService() *IISService { // ✅ Sin parámetros
@@ -144,19 +154,41 @@ func (s *IISService) GetAllSitesWithContext(ctx context.Context) ([]map[string]i
 }
 
 // ✅ Controlar un sitio específico por nombre
-func (s *IISService) ControlSite(siteName string, action string) (map[string]interface{}, error) {
+func (s *IISService) ControlSite(siteName string, action string) (*domain.ControlSiteResult, error) {
 	if runtime.GOOS != "windows" {
-		return nil, fmt.Errorf("IIS solo disponible en Windows")
+		return &domain.ControlSiteResult{}, fmt.Errorf("IIS solo disponible en Windows")
 	}
 
 	var commands []string
+
+	state, err := s.getSiteState(siteName)
+	if err != nil {
+		return &domain.ControlSiteResult{}, fmt.Errorf("error obteniendo estado: %v", err)
+	}
+
 	switch strings.ToLower(action) {
 	case "stop":
+		if state.IsStopped() {
+			return &domain.ControlSiteResult{
+				IISSite:    siteName,
+				IISAction:  domain.GetIISStateName(domain.IISStateStopped),
+				IISSuccess: true,
+				IISOutput:  "El sitio ya está detenido",
+			}, nil
+		}
 		commands = []string{
 			fmt.Sprintf("Stop-Website -Name \"%s\"", siteName),
 			fmt.Sprintf("Stop-WebAppPool -Name \"%s\"", siteName),
 		}
 	case "start":
+		if state.IsRunning() {
+			return &domain.ControlSiteResult{
+				IISSite:    siteName,
+				IISAction:  domain.GetIISStateName(domain.IISStateStarted),
+				IISSuccess: true,
+				IISOutput:  "El sitio ya está en ejecución",
+			}, nil
+		}
 		commands = []string{
 			fmt.Sprintf("Start-WebAppPool -Name \"%s\"", siteName),
 			fmt.Sprintf("Start-Website -Name \"%s\"", siteName),
@@ -171,7 +203,7 @@ func (s *IISService) ControlSite(siteName string, action string) (map[string]int
 			fmt.Sprintf("Start-Website -Name \"%s\"", siteName),
 		}
 	default:
-		return nil, fmt.Errorf("acción no válida: %s. Use: start, stop, restart", action)
+		return &domain.ControlSiteResult{}, fmt.Errorf("acción no válida: %s. Use: start, stop, restart", action)
 	}
 
 	// Ejecutar comandos
@@ -183,16 +215,16 @@ func (s *IISService) ControlSite(siteName string, action string) (map[string]int
 	cmd.Stderr = &stderr
 
 	startTime := time.Now()
-	err := cmd.Run()
+	err = cmd.Run()
 	duration := time.Since(startTime)
 
-	result := map[string]interface{}{
-		"site":      siteName,
-		"action":    action,
-		"success":   err == nil,
-		"output":    strings.TrimSpace(stdout.String()),
-		"timestamp": time.Now(),
-		"duration":  duration.String(),
+	result := &domain.ControlSiteResult{
+		IISSite:      siteName,
+		IISAction:    action,
+		IISSuccess:   err == nil,
+		IISOutput:    strings.TrimSpace(stdout.String()),
+		IISTimestamp: startTime,
+		IISDuration:  duration.String(),
 	}
 
 	if err != nil {
@@ -200,8 +232,80 @@ func (s *IISService) ControlSite(siteName string, action string) (map[string]int
 		if errorMsg == "" {
 			errorMsg = err.Error()
 		}
-		result["error"] = errorMsg
+		result.IISError = errorMsg
+	}
+
+	switch action {
+	case "start":
+		result.IISAction = domain.GetIISStateName(domain.IISStateStarted)
+	case "stop":
+		result.IISAction = domain.GetIISStateName(domain.IISStateStopped)
+	case "restart":
 	}
 
 	return result, err
+}
+
+// Función mejorada con JSON
+func (s *IISService) getSiteState(siteName string) (*domain.SiteState, error) {
+	// Script PowerShell corregido
+	script := fmt.Sprintf(`
+		$siteName = "%s"
+		try {
+			# Importar el módulo necesario
+			Import-Module WebAdministration -ErrorAction Stop
+			
+			$website = Get-Website -Name $siteName -ErrorAction Stop
+			$appPool = Get-IISAppPool -Name $siteName -ErrorAction Stop
+			
+			$result = @{
+				website_state = $website.State.ToString()
+				apppool_state = $appPool.State.ToString()
+				site_name = $siteName
+				success = $true
+			}
+			$result | ConvertTo-Json -Compress
+		} catch {
+			$result = @{
+				website_state = "NotFound"
+				apppool_state = "NotFound"
+				site_name = $siteName
+				success = $false
+				error = $_.Exception.Message
+			}
+			$result | ConvertTo-Json -Compress
+		}
+	`, siteName)
+
+	cmd := exec.Command("powershell", "-Command", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("error ejecutando comando: %v, stderr: %s", err, stderr.String())
+	}
+
+	output := strings.TrimSpace(stdout.String())
+
+	// Parsear la respuesta JSON
+	var psResult struct {
+		WebsiteState string `json:"website_state"`
+		AppPoolState string `json:"apppool_state"`
+		SiteName     string `json:"site_name"`
+		Success      bool   `json:"success"`
+		Error        string `json:"error,omitempty"`
+	}
+
+	if err := json.Unmarshal([]byte(output), &psResult); err != nil {
+		return nil, fmt.Errorf("error parseando JSON: %v, output: %s", err, output)
+	}
+
+	state := &domain.SiteState{
+		SiteName:     psResult.SiteName,
+		WebsiteState: psResult.WebsiteState,
+		AppPoolState: psResult.AppPoolState,
+	}
+
+	return state, nil
 }

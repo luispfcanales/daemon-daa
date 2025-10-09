@@ -243,6 +243,6 @@ func (m *MonitorActor) handleAlert(c *actor.Context, msg Alert) {
 }
 
 func (m *MonitorActor) handleGetStatus(c *actor.Context) {
-	checks := m.repository.GetChecks()
+	checks, _ := m.repository.GetChecks()
 	slog.Info("Current status", "total_checks", len(checks))
 }
