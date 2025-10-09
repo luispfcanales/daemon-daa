@@ -1,2 +1,4 @@
 domain_checks.csv
 domain_configs.csv
+bin/
+*.exe

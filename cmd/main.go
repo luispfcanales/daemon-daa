@@ -52,14 +52,16 @@ func main() {
 	mux := router.SetupRoutes()
 
 	handler := api.CorsMiddleware(api.LoggingMiddleware(mux))
+
+	port := getPort()
 	server := &http.Server{
-		Addr:        "0.0.0.0:8080",
+		Addr:        fmt.Sprintf("0.0.0.0:%s", port),
 		Handler:     handler,
 		IdleTimeout: 120 * time.Second,
 	}
 	// Iniciar servidor HTTP en goroutine
 	go func() {
-		slog.Info("🌐 Servidor HTTP iniciado", "port", 8080)
+		slog.Info("🌐 Servidor HTTP iniciado", "port", port)
 
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("Error iniciando servidor HTTP", "error", err)
@@ -84,4 +86,13 @@ func setupSignalHandler(_ *actor.Engine) {
 		fmt.Println("\n🛑 Apagando monitor concurrente...")
 		os.Exit(0)
 	}()
+}
+
+func getPort() string {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	return port
 }
