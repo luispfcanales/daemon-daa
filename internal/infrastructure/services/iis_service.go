@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
@@ -38,17 +39,17 @@ func (s *IISService) GetAllSites() ([]map[string]interface{}, error) {
 
 	script := `
 		Get-IISSite | Select-Object Name, State, Id, @{
-			Name="URL"; 
+			Name="URL";
 			Expression={
 				$bindings = $_.Bindings | ForEach-Object {
 					$protocol = $_.Protocol
 					$bindingInfo = $_.BindingInformation
-					
+
 					$parts = $bindingInfo -split ':'
 					$ip = $parts[0]
 					$port = $parts[1]
 					$hostname = $parts[2]
-					
+
 					if ($hostname) {
 						"${protocol}://${hostname}:${port}"
 					} elseif ($ip -and $ip -ne "*") {
@@ -63,6 +64,9 @@ func (s *IISService) GetAllSites() ([]map[string]interface{}, error) {
 	`
 
 	cmd := exec.Command("powershell", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -87,17 +91,17 @@ func (s *IISService) GetAllSitesWithContext(ctx context.Context) ([]map[string]i
 
 	script := `
 		Get-IISSite | Select-Object Name, State, Id, @{
-			Name="URL"; 
+			Name="URL";
 			Expression={
 				$bindings = $_.Bindings | ForEach-Object {
 					$protocol = $_.Protocol
 					$bindingInfo = $_.BindingInformation
-					
+
 					$parts = $bindingInfo -split ':'
 					$ip = $parts[0]
 					$port = $parts[1]
 					$hostname = $parts[2]
-					
+
 					if ($hostname) {
 						"${protocol}://${hostname}:${port}"
 					} elseif ($ip -and $ip -ne "*") {
@@ -113,6 +117,10 @@ func (s *IISService) GetAllSitesWithContext(ctx context.Context) ([]map[string]i
 
 	// Crear comando con contexto
 	cmd := exec.CommandContext(ctx, "powershell", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -209,6 +217,9 @@ func (s *IISService) ControlSite(siteName string, action string) (*domain.Contro
 	// Ejecutar comandos
 	script := strings.Join(commands, "; ")
 	cmd := exec.Command("powershell", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -278,6 +289,10 @@ func (s *IISService) getSiteState(siteName string) (*domain.SiteState, error) {
 	`, siteName)
 
 	cmd := exec.Command("powershell", "-Command", script)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		HideWindow: true,
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

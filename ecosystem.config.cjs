@@ -1,13 +1,16 @@
 module.exports = {
   apps: [{
     name: "daemon-dns",
-    script: "./bin/main.exe",
+    script: "./main.exe",
     watch: false,
     instances: 1,
     exec_mode: "fork",
     env: {
       NODE_ENV: "production",
-      PORT: 3000
+      PORT: 3000,
+      PATH: process.env.PATH,
+      PSModulePath: process.env.PSModulePath,
+      SystemRoot: process.env.SystemRoot
     }
   }]
 }
