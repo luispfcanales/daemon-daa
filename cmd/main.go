@@ -169,7 +169,7 @@ func runApplication(ctx context.Context) error {
 func getPort() string {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "8080"
+		port = "3001"
 	}
 	return port
 }
