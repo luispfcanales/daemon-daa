@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/luispfcanales/daemon-daa/internal/core/domain"
+	"github.com/luispfcanales/daemon-daa/internal/application/events"
 	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 
 	"github.com/anthdm/hollywood/actor"
@@ -16,15 +16,20 @@ type MonitorActor struct {
 	monitoring bool
 	interval   time.Duration
 	stopCh     chan struct{}
+	eventBus   *events.EventBus
 	startedAt  time.Time
 }
 
-func NewMonitorActor(repo ports.DomainRepository) actor.Producer {
+func NewMonitorActor(
+	repo ports.DomainRepository,
+	eventBus *events.EventBus,
+) actor.Producer {
 	return func() actor.Receiver {
 		return &MonitorActor{
 			repository: repo,
 			monitoring: false,
 			stopCh:     make(chan struct{}),
+			eventBus:   eventBus,
 		}
 	}
 }
@@ -42,9 +47,6 @@ func (m *MonitorActor) Receive(c *actor.Context) {
 
 	case CheckAllDomains:
 		m.handleCheckAllDomains(c) // ¡MEJORADO!
-
-	case CheckDomain:
-		m.handleCheckSingleDomain(c, msg)
 
 	case DomainChecked:
 		m.handleDomainChecked(c, msg)
@@ -90,38 +92,6 @@ func (m *MonitorActor) handleCheckAllDomains(c *actor.Context) {
 			"domain", config.Domain,
 			"pid", checkerPID)
 	}
-}
-
-// NUEVO: Manejo de dominio individual
-func (m *MonitorActor) handleCheckSingleDomain(c *actor.Context, msg CheckDomain) {
-	configs, err := m.repository.GetDomainConfigs()
-	if err != nil {
-		c.Send(c.Parent(), Alert{
-			Message: fmt.Sprintf("Error getting configs: %v", err),
-			Level:   "ERROR",
-		})
-		return
-	}
-
-	var config domain.DomainConfig
-	for _, cfg := range configs {
-		if cfg.Domain == msg.Name {
-			config = cfg
-			break
-		}
-	}
-
-	if config.Domain == "" {
-		c.Send(c.Parent(), Alert{
-			Message: fmt.Sprintf("Domain %s not found in configuration", msg.Name),
-			Level:   "ERROR",
-		})
-		return
-	}
-
-	// Crear checker temporal para este dominio único
-	checkerPID := c.SpawnChild(NewSingleDomainChecker(config), "checker-single-"+msg.Name)
-	c.Send(checkerPID, CheckDomain{Name: msg.Name})
 }
 
 func (m *MonitorActor) handleStartMonitoring(c *actor.Context, msg StartMonitoring) {
@@ -213,6 +183,7 @@ func (m *MonitorActor) monitoringLoop(c *actor.Context) {
 }
 
 func (m *MonitorActor) handleDomainChecked(c *actor.Context, msg DomainChecked) {
+
 	// Guardar en el repositorio
 	m.repository.SaveDomainCheck(msg.Check)
 
@@ -222,12 +193,22 @@ func (m *MonitorActor) handleDomainChecked(c *actor.Context, msg DomainChecked) 
 		status = "❌ INVÁLIDO"
 	}
 
+	//duration := time.Since(msg.Check.Timestamp).String()
+	duration := float64(time.Since(msg.Check.Timestamp).Microseconds()) / 1000.0
+	msg.Check.RequestTime = duration
+
+	m.eventBus.Broadcast(events.Event{
+		Type:      "monitoring_ip",
+		Data:      msg,
+		Timestamp: time.Time{},
+	})
 	slog.Info("Domain check completed",
 		"domain", msg.Check.Domain,
 		"status", status,
 		"expected", msg.Check.ExpectedIP,
 		"actual", msg.Check.ActualIPs,
-		"duration", time.Since(msg.Check.Timestamp))
+		"duration", duration,
+	)
 }
 
 func (m *MonitorActor) handleAlert(c *actor.Context, msg Alert) {

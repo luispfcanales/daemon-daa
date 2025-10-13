@@ -14,7 +14,7 @@ type CheckDomain struct {
 type CheckAllDomains struct{}
 
 type DomainChecked struct {
-	Check domain.DomainCheck
+	Check domain.DomainCheck `json:"check,omitempty"`
 }
 
 type Alert struct {

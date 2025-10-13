@@ -12,9 +12,19 @@ type Router struct {
 	handler *APIHandler
 }
 
-func NewRouter(engine *actor.Engine, monitorPID *actor.PID, iisService *services.IISService, eventBus *events.EventBus) *Router {
+func NewRouter(
+	engine *actor.Engine,
+	monitorPID *actor.PID,
+	iisService *services.IISService,
+	eventBus *events.EventBus,
+) *Router {
 	return &Router{
-		handler: NewAPIHandler(engine, monitorPID, iisService, eventBus),
+		handler: NewAPIHandler(
+			engine,
+			monitorPID,
+			iisService,
+			eventBus,
+		),
 	}
 }
 

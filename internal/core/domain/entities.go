@@ -9,12 +9,14 @@ type Domain struct {
 }
 
 type DomainCheck struct {
-	Domain     string
-	ExpectedIP string
-	ActualIPs  []string
-	IsValid    bool
-	Error      string
-	Timestamp  time.Time
+	Domain      string    `json:"domain,omitempty"`
+	ExpectedIP  string    `json:"expected_ip,omitempty"`
+	ActualIPs   []string  `json:"actual_ips,omitempty"`
+	IsValid     bool      `json:"is_valid,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	Timestamp   time.Time `json:"timestamp,omitempty"`
+	DurationMs  int64     `json:"duration_ms"`
+	RequestTime float64   `json:"request_time"`
 }
 
 type DomainConfig struct {

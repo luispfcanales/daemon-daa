@@ -4,7 +4,9 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -70,7 +72,7 @@ func (r *CSVDomainRepository) initializeFiles() {
 		defer writer.Flush()
 
 		// Escribir encabezados
-		writer.Write([]string{"domain", "expected_ip", "actual_ips", "is_valid", "error", "timestamp"})
+		writer.Write([]string{"domain", "expected_ip", "actual_ips", "is_valid", "error", "timestamp", "duration"})
 	}
 }
 
@@ -137,6 +139,7 @@ func (r *CSVDomainRepository) SaveDomainCheck(check domain.DomainCheck) error {
 		strconv.FormatBool(check.IsValid),
 		check.Error,
 		check.Timestamp.Format(time.RFC3339),
+		strconv.FormatInt(check.DurationMs, 10),
 	}
 
 	return writer.Write(record)
@@ -166,7 +169,7 @@ func (r *CSVDomainRepository) GetChecks() ([]domain.DomainCheck, error) {
 			continue // Saltar encabezado
 		}
 
-		if len(record) >= 6 {
+		if len(record) >= 7 { // Cambié a 7 porque ahora tenemos 7 campos
 			// Parsear IPs desde JSON
 			var actualIPs []string
 			if err := json.Unmarshal([]byte(record[2]), &actualIPs); err != nil {
@@ -190,6 +193,15 @@ func (r *CSVDomainRepository) GetChecks() ([]domain.DomainCheck, error) {
 				timestamp = time.Now()
 			}
 
+			//Parsear DurationMs de string a int64
+			var durationMs int64
+			if len(record) > 6 && record[6] != "" {
+				durationMs, err = strconv.ParseInt(record[6], 10, 64)
+				if err != nil {
+					durationMs = 0 // Valor por defecto si hay error
+				}
+			}
+
 			check := domain.DomainCheck{
 				Domain:     record[0],
 				ExpectedIP: record[1],
@@ -197,6 +209,7 @@ func (r *CSVDomainRepository) GetChecks() ([]domain.DomainCheck, error) {
 				IsValid:    isValid,
 				Error:      record[4],
 				Timestamp:  timestamp,
+				DurationMs: durationMs,
 			}
 			checks = append(checks, check)
 		}
@@ -320,35 +333,107 @@ func (r *CSVDomainRepository) RemoveDomainConfig(domainName string) error {
 }
 
 // GetDomainStats obtiene estadísticas de un dominio específico
-func (r *CSVDomainRepository) GetDomainStats(domainName string) (map[string]interface{}, error) {
+func (r *CSVDomainRepository) GetDomainStats(domainName string) (map[string]any, error) {
 	checks, err := r.GetChecksByDomain(domainName)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(checks) == 0 {
-		return map[string]interface{}{
-			"total_checks":   0,
-			"success_rate":   0.0,
-			"average_uptime": 0.0,
-			"last_check":     nil,
+		return map[string]any{
+			"total_checks":      0,
+			"success_rate":      0.0,
+			"average_uptime":    0.0,
+			"last_check":        nil,
+			"avg_response_time": 0.0,
+			"min_response_time": 0.0,
+			"max_response_time": 0.0,
+			"p95_response_time": 0.0,
+			"success_count":     0,
+			"failure_count":     0,
 		}, nil
 	}
 
 	successCount := 0
+	var successResponseTimes []int64
+	var totalResponseTime int64
+	minResponseTime := int64(1<<63 - 1) // máximo valor int64
+	maxResponseTime := int64(0)
+	lastCheck := checks[len(checks)-1].Timestamp
+
 	for _, check := range checks {
 		if check.IsValid && check.Error == "" {
 			successCount++
+
+			// Usar el DurationMs directamente de la estructura
+			if check.DurationMs > 0 {
+				successResponseTimes = append(successResponseTimes, check.DurationMs)
+				totalResponseTime += check.DurationMs
+
+				if check.DurationMs < minResponseTime {
+					minResponseTime = check.DurationMs
+				}
+				if check.DurationMs > maxResponseTime {
+					maxResponseTime = check.DurationMs
+				}
+			}
 		}
 	}
 
 	successRate := float64(successCount) / float64(len(checks)) * 100
-	lastCheck := checks[len(checks)-1].Timestamp
 
-	return map[string]interface{}{
-		"total_checks":   len(checks),
-		"success_rate":   successRate,
-		"average_uptime": successRate, // En este caso simple, uptime = success rate
-		"last_check":     lastCheck,
+	// Calcular métricas de response time solo para checks exitosos
+	avgResponseTime := 0.0
+	p95ResponseTime := 0.0
+
+	if len(successResponseTimes) > 0 {
+		avgResponseTime = float64(totalResponseTime) / float64(len(successResponseTimes))
+		p95ResponseTime = calculatePercentile(successResponseTimes, 95)
+	}
+
+	// Si no hay checks exitosos con response time, usar 0 para min/max
+	if minResponseTime == 1<<63-1 {
+		minResponseTime = 0
+	}
+
+	return map[string]any{
+		"total_checks":       len(checks),
+		"success_count":      successCount,
+		"failure_count":      len(checks) - successCount,
+		"success_rate":       math.Round(successRate*100) / 100, // Redondear a 2 decimales
+		"average_uptime":     math.Round(successRate*100) / 100,
+		"last_check":         lastCheck,
+		"avg_response_time":  math.Round(avgResponseTime*100) / 100, // en ms
+		"min_response_time":  float64(minResponseTime),
+		"max_response_time":  float64(maxResponseTime),
+		"p95_response_time":  math.Round(p95ResponseTime*100) / 100, // percentil 95 en ms
+		"checks_with_timing": len(successResponseTimes),
 	}, nil
+}
+
+// Función para calcular percentiles
+func calculatePercentile(times []int64, percentile int) float64 {
+	if len(times) == 0 {
+		return 0.0
+	}
+
+	// ✅ MODERNIZADO: Usar slices.Sort en lugar de sort.Slice
+	sorted := make([]int64, len(times))
+	copy(sorted, times)
+	slices.Sort(sorted) // Más simple y eficiente
+
+	// Calcular índice del percentil
+	index := float64(percentile) / 100.0 * float64(len(sorted)-1)
+
+	if index == float64(int64(index)) {
+		// Índice exacto
+		return float64(sorted[int(index)])
+	}
+
+	// Interpolación lineal entre los dos valores más cercanos
+	lower := sorted[int(math.Floor(index))]
+	upper := sorted[int(math.Ceil(index))]
+	weight := index - math.Floor(index)
+
+	return float64(lower) + (float64(upper)-float64(lower))*weight
 }

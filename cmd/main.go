@@ -110,7 +110,13 @@ func runApplication(ctx context.Context) error {
 	}
 
 	// Crear actores
-	monitorPID := engine.Spawn(actors.NewMonitorActor(repocsv), "monitor")
+	monitorPID := engine.Spawn(
+		actors.NewMonitorActor(
+			repocsv,
+			eventBus,
+		),
+		"monitor",
+	)
 	loggerPID := engine.Spawn(actors.NewConsoleLogger(), "logger")
 
 	// Suscribir el logger a los eventos

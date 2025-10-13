@@ -22,14 +22,22 @@ type APIHandler struct {
 	monitorPID *actor.PID
 	iisService *services.IISService
 	eventBus   *events.EventBus
+	//ipService  ports.IPService
 }
 
-func NewAPIHandler(engine *actor.Engine, monitorPID *actor.PID, iisService *services.IISService, eventBus *events.EventBus) *APIHandler {
+func NewAPIHandler(
+	engine *actor.Engine,
+	monitorPID *actor.PID,
+	iisService *services.IISService,
+	eventBus *events.EventBus,
+	//ipService ports.IPService,
+) *APIHandler {
 	return &APIHandler{
 		engine:     engine,
 		monitorPID: monitorPID,
 		iisService: iisService,
 		eventBus:   eventBus,
+		//ipService:  ipService,
 	}
 }
 
@@ -67,7 +75,7 @@ func (h *APIHandler) MonitoringEvents(w http.ResponseWriter, r *http.Request) {
 	// Notificar conexión inmediatamente
 	connectedEvent := events.Event{
 		Type:      "connected",
-		Data:      map[string]interface{}{"status": "connected"},
+		Data:      map[string]any{"status": "connected"},
 		Timestamp: time.Now(),
 	}
 	if data, err := json.Marshal(connectedEvent); err == nil {
