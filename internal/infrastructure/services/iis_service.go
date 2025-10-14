@@ -15,7 +15,7 @@ import (
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 )
 
-// Estructuras para el parseo JSON
+// PowerShellStateResult Estructura para el parseo JSON
 type PowerShellStateResult struct {
 	WebsiteState string `json:"website_state"`
 	AppPoolState string `json:"apppool_state"`
@@ -31,8 +31,8 @@ func NewIISService() *IISService { // ✅ Sin parámetros
 	return &IISService{}
 }
 
-// ✅ Obtener todos los sitios disponibles
-func (s *IISService) GetAllSites() ([]map[string]interface{}, error) {
+// GetAllSites Obtener todos los sitios disponibles
+func (s *IISService) GetAllSites() ([]map[string]any, error) {
 	if runtime.GOOS != "windows" {
 		return nil, fmt.Errorf("IIS solo disponible en Windows")
 	}

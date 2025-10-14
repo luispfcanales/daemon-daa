@@ -1,8 +1,6 @@
 package actors
 
 import (
-	"time"
-
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 )
 
@@ -30,12 +28,9 @@ type StopMonitoring struct{}
 
 type GetStatus struct{}
 
+type GetStatsDomain struct {
+	Stats domain.StatsDomain `json:"stats,omitempty"`
+}
+
 // Nuevos mensajes para control del monitoreo
 type GetMonitoringStatus struct{}
-
-type MonitoringStatus struct {
-	IsRunning bool          `json:"is_running"`
-	Interval  time.Duration `json:"interval"`
-	StartedAt time.Time     `json:"started_at,omitempty"`
-	Message   string        `json:"message,omitempty"`
-}

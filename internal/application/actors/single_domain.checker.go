@@ -68,8 +68,8 @@ func (s *SingleDomainChecker) handleCheckDomain(c *actor.Context, msg CheckDomai
 		check.IsValid = s.validateIPs(ips, s.config.ExpectedIP)
 	}
 
-	totalDuration := time.Since(startTime).Milliseconds()
-	check.DurationMs = totalDuration
+	totalDuration := time.Since(startTime)
+	check.DurationMs = float64(totalDuration.Nanoseconds()) / 1e6
 
 	// Enviar resultado al padre
 	c.Send(c.Parent(), DomainChecked{Check: check})

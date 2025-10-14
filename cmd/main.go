@@ -16,6 +16,7 @@ import (
 	"github.com/luispfcanales/daemon-daa/internal/application/actors"
 	"github.com/luispfcanales/daemon-daa/internal/application/api"
 	"github.com/luispfcanales/daemon-daa/internal/application/events"
+	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/repositories"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 
@@ -109,11 +110,23 @@ func runApplication(ctx context.Context) error {
 		return fmt.Errorf("error creando engine de actores: %w", err)
 	}
 
+	//config to email services
+	emailConfig := &domain.EmailConfig{
+		Host:     "smtp.gmail.com",
+		Port:     587,
+		Username: "luispfcanales@gmail.com",
+		Password: "wsyqurxxvuxrlxoc",
+		From:     "luispfcanales@gmail.com",
+	}
+	emailService := services.NewEmailService(emailConfig)
+
 	// Crear actores
 	monitorPID := engine.Spawn(
 		actors.NewMonitorActor(
 			repocsv,
 			eventBus,
+			emailService,
+			[]string{"lpfunoc@unamad.edu.pe"},
 		),
 		"monitor",
 	)

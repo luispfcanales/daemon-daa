@@ -139,7 +139,7 @@ func (r *CSVDomainRepository) SaveDomainCheck(check domain.DomainCheck) error {
 		strconv.FormatBool(check.IsValid),
 		check.Error,
 		check.Timestamp.Format(time.RFC3339),
-		strconv.FormatInt(check.DurationMs, 10),
+		strconv.FormatFloat(check.DurationMs, 'f', 3, 64), // Guardar con 3 decimales
 	}
 
 	return writer.Write(record)
@@ -194,11 +194,11 @@ func (r *CSVDomainRepository) GetChecks() ([]domain.DomainCheck, error) {
 			}
 
 			//Parsear DurationMs de string a int64
-			var durationMs int64
+			var durationMs float64
 			if len(record) > 6 && record[6] != "" {
-				durationMs, err = strconv.ParseInt(record[6], 10, 64)
+				durationMs, err = strconv.ParseFloat(record[6], 64)
 				if err != nil {
-					durationMs = 0 // Valor por defecto si hay error
+					durationMs = 0.0 // Valor por defecto si hay error
 				}
 			}
 
@@ -341,31 +341,32 @@ func (r *CSVDomainRepository) GetDomainStats(domainName string) (map[string]any,
 
 	if len(checks) == 0 {
 		return map[string]any{
-			"total_checks":      0,
-			"success_rate":      0.0,
-			"average_uptime":    0.0,
-			"last_check":        nil,
-			"avg_response_time": 0.0,
-			"min_response_time": 0.0,
-			"max_response_time": 0.0,
-			"p95_response_time": 0.0,
-			"success_count":     0,
-			"failure_count":     0,
+			"total_checks":       0,
+			"success_rate":       0.0,
+			"average_uptime":     0.0,
+			"last_check":         nil,
+			"avg_response_time":  0.0,
+			"min_response_time":  0.0,
+			"max_response_time":  0.0,
+			"p95_response_time":  0.0,
+			"success_count":      0,
+			"failure_count":      0,
+			"checks_with_timing": 0,
 		}, nil
 	}
 
 	successCount := 0
-	var successResponseTimes []int64
-	var totalResponseTime int64
-	minResponseTime := int64(1<<63 - 1) // máximo valor int64
-	maxResponseTime := int64(0)
+	var successResponseTimes []float64
+	var totalResponseTime float64
+	minResponseTime := math.MaxFloat64
+	maxResponseTime := 0.0
 	lastCheck := checks[len(checks)-1].Timestamp
 
 	for _, check := range checks {
 		if check.IsValid && check.Error == "" {
 			successCount++
 
-			// Usar el DurationMs directamente de la estructura
+			// Considerar para métricas de tiempo si DurationMs > 0
 			if check.DurationMs > 0 {
 				successResponseTimes = append(successResponseTimes, check.DurationMs)
 				totalResponseTime += check.DurationMs
@@ -382,58 +383,54 @@ func (r *CSVDomainRepository) GetDomainStats(domainName string) (map[string]any,
 
 	successRate := float64(successCount) / float64(len(checks)) * 100
 
-	// Calcular métricas de response time solo para checks exitosos
+	// Calcular métricas de response time
 	avgResponseTime := 0.0
 	p95ResponseTime := 0.0
 
 	if len(successResponseTimes) > 0 {
-		avgResponseTime = float64(totalResponseTime) / float64(len(successResponseTimes))
+		avgResponseTime = totalResponseTime / float64(len(successResponseTimes))
 		p95ResponseTime = calculatePercentile(successResponseTimes, 95)
 	}
 
-	// Si no hay checks exitosos con response time, usar 0 para min/max
-	if minResponseTime == 1<<63-1 {
-		minResponseTime = 0
+	// Si no se encontraron tiempos válidos, resetear min
+	if minResponseTime == math.MaxFloat64 {
+		minResponseTime = 0.0
 	}
 
 	return map[string]any{
 		"total_checks":       len(checks),
 		"success_count":      successCount,
 		"failure_count":      len(checks) - successCount,
-		"success_rate":       math.Round(successRate*100) / 100, // Redondear a 2 decimales
+		"success_rate":       math.Round(successRate*100) / 100,
 		"average_uptime":     math.Round(successRate*100) / 100,
 		"last_check":         lastCheck,
-		"avg_response_time":  math.Round(avgResponseTime*100) / 100, // en ms
-		"min_response_time":  float64(minResponseTime),
-		"max_response_time":  float64(maxResponseTime),
-		"p95_response_time":  math.Round(p95ResponseTime*100) / 100, // percentil 95 en ms
+		"avg_response_time":  math.Round(avgResponseTime*100) / 100,
+		"min_response_time":  math.Round(minResponseTime*100) / 100,
+		"max_response_time":  math.Round(maxResponseTime*100) / 100,
+		"p95_response_time":  math.Round(p95ResponseTime*100) / 100,
 		"checks_with_timing": len(successResponseTimes),
 	}, nil
 }
 
 // Función para calcular percentiles
-func calculatePercentile(times []int64, percentile int) float64 {
+func calculatePercentile(times []float64, percentile int) float64 {
 	if len(times) == 0 {
 		return 0.0
 	}
 
-	// ✅ MODERNIZADO: Usar slices.Sort en lugar de sort.Slice
-	sorted := make([]int64, len(times))
+	sorted := make([]float64, len(times))
 	copy(sorted, times)
-	slices.Sort(sorted) // Más simple y eficiente
+	slices.Sort(sorted)
 
-	// Calcular índice del percentil
 	index := float64(percentile) / 100.0 * float64(len(sorted)-1)
 
 	if index == float64(int64(index)) {
-		// Índice exacto
-		return float64(sorted[int(index)])
+		return sorted[int(index)]
 	}
 
-	// Interpolación lineal entre los dos valores más cercanos
 	lower := sorted[int(math.Floor(index))]
 	upper := sorted[int(math.Ceil(index))]
 	weight := index - math.Floor(index)
 
-	return float64(lower) + (float64(upper)-float64(lower))*weight
+	return lower + (upper-lower)*weight
 }

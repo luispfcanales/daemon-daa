@@ -2,34 +2,42 @@ package actors
 
 import (
 	"fmt"
+	"log"
 	"log/slog"
 	"time"
 
 	"github.com/luispfcanales/daemon-daa/internal/application/events"
+	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 
 	"github.com/anthdm/hollywood/actor"
 )
 
 type MonitorActor struct {
-	repository ports.DomainRepository
-	monitoring bool
-	interval   time.Duration
-	stopCh     chan struct{}
-	eventBus   *events.EventBus
-	startedAt  time.Time
+	repository   ports.DomainRepository
+	emailService ports.EmailService
+	monitoring   bool
+	interval     time.Duration
+	stopCh       chan struct{}
+	eventBus     *events.EventBus
+	startedAt    time.Time
+	recipients   []string
 }
 
 func NewMonitorActor(
 	repo ports.DomainRepository,
 	eventBus *events.EventBus,
+	emailService ports.EmailService,
+	recipients []string,
 ) actor.Producer {
 	return func() actor.Receiver {
 		return &MonitorActor{
-			repository: repo,
-			monitoring: false,
-			stopCh:     make(chan struct{}),
-			eventBus:   eventBus,
+			repository:   repo,
+			stopCh:       make(chan struct{}),
+			eventBus:     eventBus,
+			emailService: emailService,
+			startedAt:    time.Time{},
+			recipients:   recipients,
 		}
 	}
 }
@@ -54,8 +62,11 @@ func (m *MonitorActor) Receive(c *actor.Context) {
 	case Alert:
 		m.handleAlert(c, msg)
 
-	case GetMonitoringStatus: // ✅ NUEVO: Obtener estado
+	case GetMonitoringStatus:
 		m.handleGetMonitoringStatus(c)
+
+	case GetStatsDomain:
+		m.handleStatsDomain(c, msg)
 
 	case GetStatus:
 		m.handleGetStatus(c)
@@ -113,6 +124,7 @@ func (m *MonitorActor) handleStartMonitoring(c *actor.Context, msg StartMonitori
 	m.monitoring = true
 	m.startedAt = time.Now()
 
+	m.sendMonitoringNotification(c)
 	slog.Info("Starting concurrent domain monitoring", "interval", m.interval)
 
 	go m.monitoringLoop(c)
@@ -127,6 +139,38 @@ func (m *MonitorActor) handleStartMonitoring(c *actor.Context, msg StartMonitori
 	}
 }
 
+func (m *MonitorActor) sendMonitoringNotification(c *actor.Context) {
+	if m.emailService == nil || len(m.recipients) == 0 {
+		slog.Warn("Email service not configured or no recipients, skipping notification")
+		return
+	}
+
+	status := domain.MonitoringStatus{
+		IsRunning: m.monitoring,
+		Interval:  m.interval,
+		StartedAt: m.startedAt,
+	}
+
+	if m.monitoring {
+		status.Message = fmt.Sprintf("Monitoreo iniciado con intervalo de %v. Verificando dominios configurados.", m.interval)
+	} else {
+		status.Message = "Monitoreo detenido"
+	}
+
+	go func() {
+		err := m.emailService.SendMonitoringNotification(m.recipients, status)
+		if err != nil {
+			slog.Error("Error sending monitoring start notification", "error", err)
+			c.Send(c.PID(), Alert{
+				Level:   "ERROR",
+				Message: fmt.Sprintf("Error enviando notificación por email: %v", err),
+			})
+		} else {
+			slog.Info("Monitoring start notification sent successfully")
+		}
+	}()
+}
+
 func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 	if m.monitoring {
 		slog.Info("Stopping domain monitoring")
@@ -134,6 +178,7 @@ func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 		close(m.stopCh)
 		m.stopCh = make(chan struct{})
 
+		m.sendMonitoringNotification(c)
 		// Responder éxito si hay un solicitante
 		if c.Sender() != nil {
 			c.Send(c.Sender(), MonitoringStatus{
@@ -182,7 +227,7 @@ func (m *MonitorActor) monitoringLoop(c *actor.Context) {
 	}
 }
 
-func (m *MonitorActor) handleDomainChecked(c *actor.Context, msg DomainChecked) {
+func (m *MonitorActor) handleDomainChecked(_ *actor.Context, msg DomainChecked) {
 
 	// Guardar en el repositorio
 	m.repository.SaveDomainCheck(msg.Check)
@@ -211,7 +256,7 @@ func (m *MonitorActor) handleDomainChecked(c *actor.Context, msg DomainChecked) 
 	)
 }
 
-func (m *MonitorActor) handleAlert(c *actor.Context, msg Alert) {
+func (m *MonitorActor) handleAlert(_ *actor.Context, msg Alert) {
 	emoji := "⚠️"
 	if msg.Level == "ERROR" {
 		emoji = "🚨"
@@ -223,7 +268,16 @@ func (m *MonitorActor) handleAlert(c *actor.Context, msg Alert) {
 	fmt.Printf("\n%s %s: %s\n\n", emoji, msg.Level, msg.Message)
 }
 
-func (m *MonitorActor) handleGetStatus(c *actor.Context) {
+func (m *MonitorActor) handleStatsDomain(_ *actor.Context, msg GetStatsDomain) {
+
+	data, err := m.repository.GetDomainStats("intranet.unamad.edu.pe")
+	if err != nil {
+		slog.Error("Error getting info Stats", "error", err)
+	}
+	log.Println(data)
+}
+
+func (m *MonitorActor) handleGetStatus(_ *actor.Context) {
 	checks, _ := m.repository.GetChecks()
 	slog.Info("Current status", "total_checks", len(checks))
 }

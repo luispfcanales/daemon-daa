@@ -4,6 +4,7 @@ go 1.23.2
 
 require (
 	github.com/anthdm/hollywood v1.0.5
+	github.com/google/uuid v1.5.0
 	golang.org/x/sys v0.15.0
 )
 
