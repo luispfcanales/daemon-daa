@@ -15,5 +15,5 @@ type DomainRepository interface {
 	GetChecksByTimeRange(start, end time.Time) ([]domain.DomainCheck, error)
 	AddDomainConfig(config domain.DomainConfig) error
 	RemoveDomainConfig(domain string) error
-	GetDomainStats(domain string) (map[string]any, error)
+	GetDomainStats(domain string) (domain.StatsDomain, error)
 }

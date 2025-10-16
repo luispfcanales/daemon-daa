@@ -4,11 +4,16 @@ import (
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 )
 
-// Mensajes del sistema
-type CheckDomain struct {
-	Name string
+// Messages actor single checker
+type CheckDomain struct{}
+
+type GenerateStatsDomain struct{}
+
+type NotifyStats struct {
+	Stats domain.StatsDomain `json:"stats,omitempty"`
 }
 
+// messages actor monitoring
 type CheckAllDomains struct{}
 
 type DomainChecked struct {
@@ -21,16 +26,10 @@ type Alert struct {
 }
 
 type StartMonitoring struct {
-	Interval int // segundos
+	Interval int
 }
 
 type StopMonitoring struct{}
-
-type GetStatus struct{}
-
-type GetStatsDomain struct {
-	Stats domain.StatsDomain `json:"stats,omitempty"`
-}
 
 // Nuevos mensajes para control del monitoreo
 type GetMonitoringStatus struct{}

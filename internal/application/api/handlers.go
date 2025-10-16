@@ -239,7 +239,7 @@ func (h *APIHandler) ControlMonitoring(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *APIHandler) handleStartWithCheck(w http.ResponseWriter, interval int, currentStatus *actors.MonitoringStatus) {
+func (h *APIHandler) handleStartWithCheck(w http.ResponseWriter, interval int, currentStatus *domain.MonitoringStatus) {
 	if interval <= 0 {
 		interval = 30
 	}
@@ -287,7 +287,7 @@ func (h *APIHandler) handleStartWithCheck(w http.ResponseWriter, interval int, c
 	h.sendJSON(w, response, http.StatusOK)
 }
 
-func (h *APIHandler) handleStopWithCheck(w http.ResponseWriter, currentStatus *actors.MonitoringStatus) {
+func (h *APIHandler) handleStopWithCheck(w http.ResponseWriter, currentStatus *domain.MonitoringStatus) {
 	if !currentStatus.IsRunning {
 		response := map[string]interface{}{
 			"success":    false,
@@ -324,7 +324,7 @@ func (h *APIHandler) handleStopWithCheck(w http.ResponseWriter, currentStatus *a
 	h.sendJSON(w, response, http.StatusOK)
 }
 
-func (h *APIHandler) handleStatusResponse(w http.ResponseWriter, status *actors.MonitoringStatus) {
+func (h *APIHandler) handleStatusResponse(w http.ResponseWriter, status *domain.MonitoringStatus) {
 	response := map[string]interface{}{
 		"success":    true,
 		"is_running": status.IsRunning,
@@ -344,7 +344,7 @@ func (h *APIHandler) handleStatusResponse(w http.ResponseWriter, status *actors.
 	h.sendJSON(w, response, http.StatusOK)
 }
 
-func (h *APIHandler) getCurrentMonitoringStatus() (*actors.MonitoringStatus, error) {
+func (h *APIHandler) getCurrentMonitoringStatus() (*domain.MonitoringStatus, error) {
 	future := h.engine.Request(h.monitorPID, actors.GetMonitoringStatus{}, 3*time.Second)
 
 	result, err := future.Result()
@@ -352,7 +352,7 @@ func (h *APIHandler) getCurrentMonitoringStatus() (*actors.MonitoringStatus, err
 		return nil, fmt.Errorf("no se pudo obtener estado: %v", err)
 	}
 
-	if status, ok := result.(actors.MonitoringStatus); ok {
+	if status, ok := result.(domain.MonitoringStatus); ok {
 		return &status, nil
 	}
 

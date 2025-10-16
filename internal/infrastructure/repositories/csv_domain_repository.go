@@ -333,26 +333,14 @@ func (r *CSVDomainRepository) RemoveDomainConfig(domainName string) error {
 }
 
 // GetDomainStats obtiene estadísticas de un dominio específico
-func (r *CSVDomainRepository) GetDomainStats(domainName string) (map[string]any, error) {
+func (r *CSVDomainRepository) GetDomainStats(domainName string) (domain.StatsDomain, error) {
 	checks, err := r.GetChecksByDomain(domainName)
 	if err != nil {
-		return nil, err
+		return domain.StatsDomain{}, err
 	}
 
 	if len(checks) == 0 {
-		return map[string]any{
-			"total_checks":       0,
-			"success_rate":       0.0,
-			"average_uptime":     0.0,
-			"last_check":         nil,
-			"avg_response_time":  0.0,
-			"min_response_time":  0.0,
-			"max_response_time":  0.0,
-			"p95_response_time":  0.0,
-			"success_count":      0,
-			"failure_count":      0,
-			"checks_with_timing": 0,
-		}, nil
+		return domain.StatsDomain{}, nil
 	}
 
 	successCount := 0
@@ -397,18 +385,18 @@ func (r *CSVDomainRepository) GetDomainStats(domainName string) (map[string]any,
 		minResponseTime = 0.0
 	}
 
-	return map[string]any{
-		"total_checks":       len(checks),
-		"success_count":      successCount,
-		"failure_count":      len(checks) - successCount,
-		"success_rate":       math.Round(successRate*100) / 100,
-		"average_uptime":     math.Round(successRate*100) / 100,
-		"last_check":         lastCheck,
-		"avg_response_time":  math.Round(avgResponseTime*100) / 100,
-		"min_response_time":  math.Round(minResponseTime*100) / 100,
-		"max_response_time":  math.Round(maxResponseTime*100) / 100,
-		"p95_response_time":  math.Round(p95ResponseTime*100) / 100,
-		"checks_with_timing": len(successResponseTimes),
+	return domain.StatsDomain{
+		TotalChecks:      len(checks),
+		SuccessCount:     successCount,
+		FailureCount:     len(checks) - successCount,
+		SuccessRate:      math.Round(successRate*100) / 100,
+		AverageUptime:    math.Round(successRate*100) / 100,
+		LastCheck:        lastCheck,
+		AvgResponseTime:  math.Round(avgResponseTime*100) / 100,
+		MinResponseTime:  math.Round(minResponseTime*100) / 100,
+		MaxResponseTime:  math.Round(maxResponseTime*100) / 100,
+		P95ResponseTime:  math.Round(p95ResponseTime*100) / 100,
+		ChecksWithTiming: len(successResponseTimes),
 	}, nil
 }
 

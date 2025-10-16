@@ -32,16 +32,14 @@ func (s *IPDomainService) GetStats(domain string) (map[string]any, error) {
 	}
 
 	// Determinar estado general basado en el success rate
-	if successRate, ok := stats["success_rate"].(float64); ok {
-		if successRate >= 95.0 {
-			result["health_status"] = "excellent"
-		} else if successRate >= 80.0 {
-			result["health_status"] = "good"
-		} else if successRate >= 60.0 {
-			result["health_status"] = "degraded"
-		} else {
-			result["health_status"] = "poor"
-		}
+	if stats.SuccessRate >= 95.0 {
+		result["health_status"] = "excellent"
+	} else if stats.SuccessRate >= 80.0 {
+		result["health_status"] = "good"
+	} else if stats.SuccessRate >= 60.0 {
+		result["health_status"] = "degraded"
+	} else {
+		result["health_status"] = "poor"
 	}
 
 	return result, nil
