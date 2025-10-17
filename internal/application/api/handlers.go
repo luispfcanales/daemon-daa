@@ -98,6 +98,7 @@ func (h *APIHandler) MonitoringEvents(w http.ResponseWriter, r *http.Request) {
 	// Enviar estado inicial
 	go h.currentStatus(ctx, client)
 	go h.sitesWithContext(ctx, client)
+	go h.getCachedStatsHandler(ctx, client)
 
 	// Heartbeat ticker
 	ticker := time.NewTicker(30 * time.Second)
@@ -140,6 +141,47 @@ func (h *APIHandler) MonitoringEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (h *APIHandler) getCachedStatsHandler(ctx context.Context, client chan<- events.Event) {
+	if ctx.Err() != nil {
+		return
+	}
+
+	type result struct {
+		data any
+		err  error
+	}
+	resultCh := make(chan result, 1)
+
+	go func() {
+		response := h.engine.Request(h.monitorPID, actors.GetAllCachedStats{}, 5*time.Second)
+		data, err := response.Result()
+
+		select {
+		case resultCh <- result{data: data, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return
+	case r := <-resultCh:
+		if r.err != nil {
+			return
+		}
+		if statsResponse, ok := r.data.(actors.AllCachedStatsResponse); ok {
+			select {
+			case client <- events.Event{
+				Type:      "monitoring_domain_stats_cached",
+				Data:      statsResponse,
+				Timestamp: time.Now(),
+			}:
+			case <-ctx.Done():
+			}
+		}
+	}
+}
+
 func (h *APIHandler) sitesWithContext(ctx context.Context, client chan<- events.Event) {
 	// Pequeño delay para estabilizar la conexión
 	select {
@@ -162,7 +204,7 @@ func (h *APIHandler) sitesWithContext(ctx context.Context, client chan<- events.
 
 	webSites := events.Event{
 		Type: "websites_list",
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"success": true,
 			"sites":   sites,
 			"count":   len(sites),
@@ -191,7 +233,7 @@ func (h *APIHandler) currentStatus(ctx context.Context, client chan<- events.Eve
 
 	initialEvent := events.Event{
 		Type: "initial_status",
-		Data: map[string]interface{}{
+		Data: map[string]any{
 			"is_running": status.IsRunning,
 			"interval":   int(status.Interval.Seconds()),
 		},
@@ -371,7 +413,7 @@ func (h *APIHandler) GetIISSites(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response := map[string]interface{}{
+	response := map[string]any{
 		"success": true,
 		"sites":   sites,
 		"count":   len(sites),

@@ -67,6 +67,9 @@ func (m *MonitorActor) Receive(c *actor.Context) {
 	case GetMonitoringStatus:
 		m.handleGetMonitoringStatus(c)
 
+	case GetAllCachedStats:
+		m.handleGetAllCachedStats(c)
+
 	case actor.Stopped:
 		m.handleStopMonitoring(c)
 		slog.Info("MonitorActor stopped", "pid", c.PID())
@@ -98,6 +101,100 @@ func (m *MonitorActor) triggerDomainChecks(c *actor.Context) {
 	slog.Info("Starting concurrent domain check", "domains", len(m.domainCheckers))
 	for _, pid := range m.domainCheckers {
 		c.Send(pid, CheckDomain{})
+	}
+}
+
+func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
+	slog.Debug("Collecting cached stats from all domain checkers",
+		"total_domains", len(m.domainCheckers))
+
+	if len(m.domainCheckers) == 0 {
+		slog.Warn("No domain checkers available")
+		if c.Sender() != nil {
+			c.Send(c.Sender(), AllCachedStatsResponse{
+				Stats: []*domain.StatsDomain{},
+			})
+		}
+		return
+	}
+
+	statsMap := []*domain.StatsDomain{}
+	type domainResponse struct {
+		domain   string
+		response CachedStatsResponse
+	}
+	responseChan := make(chan domainResponse, len(m.domainCheckers))
+
+	for domainName, pid := range m.domainCheckers {
+		domain := domainName
+
+		go func(d string, p *actor.PID) {
+			response := c.Request(p, GetCachedStats{}, 1*time.Second)
+
+			result, err := response.Result()
+
+			if err != nil {
+				slog.Warn("Error requesting stats",
+					"domain", d,
+					"error", err)
+				responseChan <- domainResponse{
+					domain:   d,
+					response: CachedStatsResponse{Found: false},
+				}
+				return
+			}
+
+			if cachedStats, ok := result.(CachedStatsResponse); ok {
+				responseChan <- domainResponse{
+					domain:   d,
+					response: cachedStats,
+				}
+			} else {
+				slog.Warn("Invalid response type",
+					"domain", d,
+					"type", fmt.Sprintf("%T", result))
+				responseChan <- domainResponse{
+					domain:   d,
+					response: CachedStatsResponse{Found: false},
+				}
+			}
+		}(domain, pid)
+	}
+
+	// Recolectar respuestas con timeout global
+	timeout := time.After(3 * time.Second)
+	collected := 0
+	expectedCount := len(m.domainCheckers)
+
+	for collected < expectedCount {
+		select {
+		case result := <-responseChan:
+			if result.response.Found && result.response.Stats != nil {
+				statsMap = append(statsMap, result.response.Stats)
+				slog.Debug("Stats collected",
+					"domain", result.domain,
+					"total_checks", result.response.Stats.TotalChecks)
+			} else {
+				slog.Debug("No stats available for domain", "domain", result.domain)
+			}
+			collected++
+
+		case <-timeout:
+			slog.Warn("Timeout collecting cached stats",
+				"collected", collected,
+				"expected", expectedCount,
+				"missing", expectedCount-collected)
+			goto sendResponse
+		}
+	}
+
+sendResponse:
+	slog.Info("Cached stats collection complete",
+		"domains_with_stats", len(statsMap),
+		"total_domains", expectedCount)
+
+	if c.Sender() != nil {
+		c.Send(c.Sender(), AllCachedStatsResponse{Stats: statsMap})
 	}
 }
 

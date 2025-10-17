@@ -4,16 +4,14 @@ import (
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 )
 
-// Messages actor single checker
+// CheckDomain Messages actor single checker
 type CheckDomain struct{}
-
-type GenerateStatsDomain struct{}
 
 type NotifyStats struct {
 	Stats domain.StatsDomain `json:"stats,omitempty"`
 }
 
-// messages actor monitoring
+// CheckAllDomains  messages actor monitoring
 type CheckAllDomains struct{}
 
 type DomainChecked struct {
@@ -31,5 +29,22 @@ type StartMonitoring struct {
 
 type StopMonitoring struct{}
 
-// Nuevos mensajes para control del monitoreo
+// GetMonitoringStatus Nuevos mensajes para control del monitoreo
 type GetMonitoringStatus struct{}
+
+// GetCachedStats solicita las estadísticas en caché de un dominio
+type GetCachedStats struct{}
+
+// CachedStatsResponse respuesta con las estadísticas en caché
+type CachedStatsResponse struct {
+	Stats *domain.StatsDomain
+	Found bool
+}
+
+// GetAllCachedStats solicita estadísticas de todos los dominios
+type GetAllCachedStats struct{}
+
+// AllCachedStatsResponse respuesta con todas las estadísticas
+type AllCachedStatsResponse struct {
+	Stats []*domain.StatsDomain `json:"stats"`
+}

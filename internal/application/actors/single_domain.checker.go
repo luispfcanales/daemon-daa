@@ -44,6 +44,7 @@ func NewSingleDomainChecker(
 func (s *SingleDomainChecker) Receive(c *actor.Context) {
 	switch c.Message().(type) {
 	case actor.Started:
+		s.generateStast()
 		slog.Info("SingleDomainChecker started",
 			"domain", s.config.Domain,
 			"pid", c.PID())
@@ -51,16 +52,42 @@ func (s *SingleDomainChecker) Receive(c *actor.Context) {
 	case CheckDomain:
 		s.handleCheckDomain(c)
 
-	case GenerateStatsDomain:
-		s.handleStatsDomain(c)
-
 	case NotifyStats:
 		s.handleNotifyStats(c)
+
+	case GetCachedStats:
+		s.handleGetCachedStats(c)
 
 	case actor.Stopped:
 		slog.Debug("SingleDomainChecker stopped",
 			"domain", s.config.Domain,
 			"pid", c.PID())
+	}
+}
+
+func (s *SingleDomainChecker) handleGetCachedStats(c *actor.Context) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	response := CachedStatsResponse{
+		Stats: nil,
+		Found: false,
+	}
+
+	if s.statDomain != nil {
+		statsCopy := *s.statDomain
+		response.Stats = &statsCopy
+		response.Found = true
+
+		slog.Debug("Cached stats retrieved",
+			"domain", s.config.Domain,
+			"total_checks", statsCopy.TotalChecks)
+	} else {
+		slog.Debug("No cached stats available yet", "domain", s.config.Domain)
+	}
+
+	if c.Sender() != nil {
+		c.Send(c.Sender(), response)
 	}
 }
 
@@ -89,7 +116,10 @@ func (s *SingleDomainChecker) handleCheckDomain(c *actor.Context) {
 	check.DurationMs = float64(totalDuration.Nanoseconds()) / 1e6
 
 	s.repository.SaveDomainCheck(check)
+	s.generateStast()
+
 	c.Send(c.Parent(), DomainChecked{Check: check})
+	c.Send(c.PID(), NotifyStats{})
 
 	// Alertas
 	if !check.IsValid {
@@ -122,9 +152,7 @@ func (s *SingleDomainChecker) handleNotifyStats(_ *actor.Context) {
 	})
 }
 
-func (s *SingleDomainChecker) handleStatsDomain(c *actor.Context) {
-	slog.Debug("Generating stats from repository", "domain", s.config.Domain)
-
+func (s *SingleDomainChecker) generateStast() {
 	data, err := s.repository.GetDomainStats(s.config.Domain)
 	if err != nil {
 		slog.Error("Error getting domain stats",
@@ -149,22 +177,6 @@ func (s *SingleDomainChecker) handleStatsDomain(c *actor.Context) {
 		DNS:              s.config.Domain,
 	}
 	s.mu.Unlock()
-
-	c.Send(c.PID(), NotifyStats{})
-}
-
-// GetCachedStats - Método público para obtener stats desde otros lugares
-func (s *SingleDomainChecker) GetCachedStats() *domain.StatsDomain {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.statDomain == nil {
-		return nil
-	}
-
-	// Retornar copia para evitar mutaciones
-	statsCopy := *s.statDomain
-	return &statsCopy
 }
 
 func (s *SingleDomainChecker) validateIPs(actualIPs []string, expectedIP string) bool {
