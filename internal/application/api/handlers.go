@@ -12,6 +12,7 @@ import (
 	"github.com/luispfcanales/daemon-daa/internal/application/actors"
 	"github.com/luispfcanales/daemon-daa/internal/application/events"
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
+	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 
 	"github.com/anthdm/hollywood/actor"
@@ -22,7 +23,7 @@ type APIHandler struct {
 	monitorPID *actor.PID
 	iisService *services.IISService
 	eventBus   *events.EventBus
-	//ipService  ports.IPService
+	ipService  ports.IPService
 }
 
 func NewAPIHandler(
@@ -30,14 +31,14 @@ func NewAPIHandler(
 	monitorPID *actor.PID,
 	iisService *services.IISService,
 	eventBus *events.EventBus,
-	//ipService ports.IPService,
+	ipService ports.IPService,
 ) *APIHandler {
 	return &APIHandler{
 		engine:     engine,
 		monitorPID: monitorPID,
 		iisService: iisService,
 		eventBus:   eventBus,
-		//ipService:  ipService,
+		ipService:  ipService,
 	}
 }
 

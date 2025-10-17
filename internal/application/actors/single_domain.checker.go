@@ -59,9 +59,10 @@ func (s *SingleDomainChecker) Receive(c *actor.Context) {
 		s.handleGetCachedStats(c)
 
 	case actor.Stopped:
-		slog.Debug("SingleDomainChecker stopped",
+		slog.Info("SingleDomainChecker stopped",
 			"domain", s.config.Domain,
-			"pid", c.PID())
+			"pid", c.PID(),
+		)
 	}
 }
 

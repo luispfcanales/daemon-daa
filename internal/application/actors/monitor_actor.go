@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"sync"
 	"time"
 
 	"github.com/luispfcanales/daemon-daa/internal/application/events"
@@ -23,6 +25,7 @@ type MonitorActor struct {
 	startedAt       time.Time
 	recipientsEmail []string
 	domainCheckers  map[string]*actor.PID
+	mu              sync.RWMutex
 }
 
 func NewMonitorActor(
@@ -47,9 +50,9 @@ func (m *MonitorActor) Receive(c *actor.Context) {
 	switch msg := c.Message().(type) {
 	case actor.Started:
 		slog.Info("MonitorActor started", "pid", c.PID())
-		m.initializeDomainCheckers(c)
 
 	case StartMonitoring:
+		m.initializeDomainCheckers(c)
 		m.handleStartMonitoring(c, msg)
 
 	case StopMonitoring:
@@ -83,6 +86,9 @@ func (m *MonitorActor) initializeDomainCheckers(c *actor.Context) {
 		return
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for _, config := range configs {
 		checkerPID := c.SpawnChild(
 			NewSingleDomainChecker(
@@ -98,6 +104,9 @@ func (m *MonitorActor) initializeDomainCheckers(c *actor.Context) {
 }
 
 func (m *MonitorActor) triggerDomainChecks(c *actor.Context) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	slog.Info("Starting concurrent domain check", "domains", len(m.domainCheckers))
 	for _, pid := range m.domainCheckers {
 		c.Send(pid, CheckDomain{})
@@ -105,6 +114,13 @@ func (m *MonitorActor) triggerDomainChecks(c *actor.Context) {
 }
 
 func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
+	m.mu.RLock()
+
+	domainCheckersCopy := make(map[string]*actor.PID, len(m.domainCheckers))
+	maps.Copy(domainCheckersCopy, m.domainCheckers)
+
+	m.mu.RUnlock()
+
 	slog.Debug("Collecting cached stats from all domain checkers",
 		"total_domains", len(m.domainCheckers))
 
@@ -123,9 +139,9 @@ func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
 		domain   string
 		response CachedStatsResponse
 	}
-	responseChan := make(chan domainResponse, len(m.domainCheckers))
+	responseChan := make(chan domainResponse, len(domainCheckersCopy))
 
-	for domainName, pid := range m.domainCheckers {
+	for domainName, pid := range domainCheckersCopy {
 		domain := domainName
 
 		go func(d string, p *actor.PID) {
@@ -274,6 +290,16 @@ func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 
 		m.cancelFunc()
 		m.cancelFunc = nil
+
+		m.mu.Lock()
+		domainCheckersCopy := make(map[string]*actor.PID, len(m.domainCheckers))
+		maps.Copy(domainCheckersCopy, m.domainCheckers)
+		m.domainCheckers = make(map[string]*actor.PID)
+		m.mu.Unlock()
+
+		for _, pid := range domainCheckersCopy {
+			c.Engine().Poison(pid)
+		}
 
 		m.sendMonitoringNotification(c)
 

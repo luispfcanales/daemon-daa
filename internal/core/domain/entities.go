@@ -22,6 +22,7 @@ type DomainCheck struct {
 type DomainConfig struct {
 	Domain     string
 	ExpectedIP string
+	Status     bool
 }
 
 type StatsDomain struct {

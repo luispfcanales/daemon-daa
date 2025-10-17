@@ -1,6 +1,7 @@
 package services
 
 import (
+	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 )
 
@@ -12,6 +13,14 @@ func NewIPDomainService(repo ports.DomainRepository) ports.IPService {
 	return &IPDomainService{
 		repo: repo,
 	}
+}
+
+func (s *IPDomainService) ListDomains() ([]domain.DomainConfig, error) {
+	return s.repo.GetDomainConfigs()
+}
+
+func (s *IPDomainService) AddDomain(c domain.DomainConfig) error {
+	return s.repo.AddDomainConfig(c)
 }
 
 func (s *IPDomainService) GetStats(domain string) (map[string]any, error) {

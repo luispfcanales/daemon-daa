@@ -102,6 +102,7 @@ func runApplication(ctx context.Context) error {
 
 	eventBus := events.NewEventBus()
 	iisService := services.NewIISService()
+	ipService := services.NewIPDomainService(repocsv)
 
 	// Configurar el engine de Hollywood
 	config := actor.NewEngineConfig()
@@ -136,7 +137,13 @@ func runApplication(ctx context.Context) error {
 	engine.Subscribe(loggerPID)
 
 	// Configurar y iniciar servidor HTTP
-	router := api.NewRouter(engine, monitorPID, iisService, eventBus)
+	router := api.NewRouter(
+		engine,
+		monitorPID,
+		iisService,
+		eventBus,
+		ipService,
+	)
 	mux := router.SetupRoutes()
 
 	handler := api.CorsMiddleware(api.LoggingMiddleware(mux))

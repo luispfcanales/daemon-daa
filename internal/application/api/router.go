@@ -5,6 +5,7 @@ import (
 
 	"github.com/anthdm/hollywood/actor"
 	"github.com/luispfcanales/daemon-daa/internal/application/events"
+	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 	"github.com/luispfcanales/daemon-daa/internal/infrastructure/services"
 )
 
@@ -17,6 +18,7 @@ func NewRouter(
 	monitorPID *actor.PID,
 	iisService *services.IISService,
 	eventBus *events.EventBus,
+	ipService ports.IPService,
 ) *Router {
 	return &Router{
 		handler: NewAPIHandler(
@@ -24,6 +26,7 @@ func NewRouter(
 			monitorPID,
 			iisService,
 			eventBus,
+			ipService,
 		),
 	}
 }
@@ -38,6 +41,10 @@ func (r *Router) SetupRoutes() *http.ServeMux {
 	mux.HandleFunc("POST /monitoring/control", r.handler.ControlMonitoring)
 	mux.HandleFunc("POST /iis/control", r.handler.ControlIIS)
 	mux.HandleFunc("GET /iis/sites", r.handler.GetIISSites)
+
+	//control de dominios
+	mux.HandleFunc("GET /domain/list", r.handler.GetDomainsList)
+	mux.HandleFunc("POST /domain/add", r.handler.AddDomain)
 
 	// Ruta por defecto
 	mux.HandleFunc("/", r.handler.NotFound)

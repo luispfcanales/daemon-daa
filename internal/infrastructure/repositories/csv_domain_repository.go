@@ -46,13 +46,13 @@ func (r *CSVDomainRepository) initializeFiles() {
 		defer writer.Flush()
 
 		// Escribir encabezados
-		writer.Write([]string{"domain", "expected_ip"})
+		writer.Write([]string{"domain", "expected_ip", "status"})
 
 		// Datos iniciales
 		initialConfigs := [][]string{
-			{"intranet.unamad.edu.pe", "110.238.69.0"},
-			{"aulavirtual.unamad.edu.pe", "110.238.69.0"},
-			{"matricula.unamad.edu.pe", "110.238.69.0"},
+			{"intranet.unamad.edu.pe", "110.238.69.0", "false"},
+			{"aulavirtual.unamad.edu.pe", "110.238.69.0", "false"},
+			{"matricula.unamad.edu.pe", "110.238.69.0", "false"},
 		}
 
 		for _, config := range initialConfigs {
@@ -100,10 +100,12 @@ func (r *CSVDomainRepository) GetDomainConfigs() ([]domain.DomainConfig, error) 
 			continue // Saltar encabezado
 		}
 
-		if len(record) >= 2 {
+		if len(record) >= 3 {
+			status := record[2] == "true"
 			config := domain.DomainConfig{
 				Domain:     record[0],
 				ExpectedIP: record[1],
+				Status:     status,
 			}
 			configs = append(configs, config)
 		}
