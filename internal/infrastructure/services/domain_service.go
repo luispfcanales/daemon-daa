@@ -23,6 +23,10 @@ func (s *IPDomainService) AddDomain(c domain.DomainConfig) error {
 	return s.repo.AddDomainConfig(c)
 }
 
+func (s *IPDomainService) DeleteDomain(domainName string) error {
+	return s.repo.RemoveDomainConfig(domainName)
+}
+
 func (s *IPDomainService) GetStats(domain string) (map[string]any, error) {
 	// Obtener estadísticas del dominio usando el repositorio
 	stats, err := s.repo.GetDomainStats(domain)

@@ -54,3 +54,23 @@ func (h *APIHandler) AddDomain(w http.ResponseWriter, r *http.Request) {
 
 	h.sendJSON(w, req, http.StatusCreated)
 }
+
+func (h *APIHandler) DeleteDomain(w http.ResponseWriter, r *http.Request) {
+	domainName := r.PathValue("dns")
+	if domainName == "" {
+		h.sendError(w, "Dominio no especificado", http.StatusBadRequest)
+		return
+	}
+
+	err := h.ipService.DeleteDomain(domainName)
+	if err != nil {
+		h.sendError(
+			w,
+			err.Error(),
+			http.StatusNotFound,
+		)
+		return
+	}
+
+	h.sendJSON(w, "Dominio eliminado", http.StatusOK)
+}

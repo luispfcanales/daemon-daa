@@ -76,10 +76,8 @@ func (r *CSVDomainRepository) initializeFiles() {
 	}
 }
 
-func (r *CSVDomainRepository) GetDomainConfigs() ([]domain.DomainConfig, error) {
-	r.mutex.RLock()
-	defer r.mutex.RUnlock()
-
+// getDomainConfigsUnsafe lee las configuraciones SIN lock
+func (r *CSVDomainRepository) getDomainConfigsUnsafe() ([]domain.DomainConfig, error) {
 	file, err := os.Open(r.configsFile)
 	if err != nil {
 		return nil, fmt.Errorf("error abriendo archivo de configuraciones: %v", err)
@@ -114,6 +112,231 @@ func (r *CSVDomainRepository) GetDomainConfigs() ([]domain.DomainConfig, error) 
 	return configs, nil
 }
 
+// writeConfigsUnsafe escribe las configuraciones al archivo SIN lock
+func (r *CSVDomainRepository) writeConfigsUnsafe(configs []domain.DomainConfig) error {
+	file, err := os.Create(r.configsFile)
+	if err != nil {
+		return fmt.Errorf("error creando archivo de configuraciones: %v", err)
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Escribir encabezado
+	if err := writer.Write([]string{"domain", "expected_ip", "status"}); err != nil {
+		return fmt.Errorf("error escribiendo encabezado: %v", err)
+	}
+
+	// Escribir configuraciones
+	for _, config := range configs {
+		statusStr := "false"
+		if config.Status {
+			statusStr = "true"
+		}
+
+		record := []string{
+			config.Domain,
+			config.ExpectedIP,
+			statusStr,
+		}
+
+		if err := writer.Write(record); err != nil {
+			return fmt.Errorf("error escribiendo registro: %v", err)
+		}
+	}
+
+	return nil
+}
+
+// getChecksUnsafe lee los checks SIN lock
+func (r *CSVDomainRepository) getChecksUnsafe() ([]domain.DomainCheck, error) {
+	file, err := os.Open(r.checksFile)
+	if err != nil {
+		return nil, fmt.Errorf("error abriendo archivo de checks: %v", err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("error leyendo archivo CSV: %v", err)
+	}
+
+	var checks []domain.DomainCheck
+
+	// Saltar encabezado
+	for i, record := range records {
+		if i == 0 {
+			continue // Saltar encabezado
+		}
+
+		if len(record) >= 7 {
+			// Parsear IPs desde JSON
+			var actualIPs []string
+			if err := json.Unmarshal([]byte(record[2]), &actualIPs); err != nil {
+				// Fallback: intentar parsear como string simple
+				if record[2] != "" && record[2] != "[]" {
+					actualIPs = []string{record[2]}
+				} else {
+					actualIPs = []string{}
+				}
+			}
+
+			// Parsear boolean
+			isValid, err := strconv.ParseBool(record[3])
+			if err != nil {
+				isValid = false
+			}
+
+			// Parsear timestamp
+			timestamp, err := time.Parse(time.RFC3339, record[5])
+			if err != nil {
+				timestamp = time.Now()
+			}
+
+			// Parsear DurationMs de string a float64
+			var durationMs float64
+			if len(record) > 6 && record[6] != "" {
+				durationMs, err = strconv.ParseFloat(record[6], 64)
+				if err != nil {
+					durationMs = 0.0
+				}
+			}
+
+			check := domain.DomainCheck{
+				Domain:     record[0],
+				ExpectedIP: record[1],
+				ActualIPs:  actualIPs,
+				IsValid:    isValid,
+				Error:      record[4],
+				Timestamp:  timestamp,
+				DurationMs: durationMs,
+			}
+			checks = append(checks, check)
+		}
+	}
+
+	return checks, nil
+}
+
+// GetDomainConfigs obtiene todas las configuraciones de dominios
+func (r *CSVDomainRepository) GetDomainConfigs() ([]domain.DomainConfig, error) {
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	return r.getDomainConfigsUnsafe()
+}
+
+// AddDomainConfig agrega una nueva configuración de dominio
+func (r *CSVDomainRepository) AddDomainConfig(config domain.DomainConfig) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	// Leer configuraciones existentes
+	configs, err := r.getDomainConfigsUnsafe()
+	if err != nil {
+		return err
+	}
+
+	// Verificar si el dominio ya existe
+	for _, existingConfig := range configs {
+		if existingConfig.Domain == config.Domain {
+			return fmt.Errorf("el dominio '%s' ya existe", config.Domain)
+		}
+	}
+
+	// Agregar nueva configuración
+	configs = append(configs, config)
+
+	// Escribir todas las configuraciones
+	return r.writeConfigsUnsafe(configs)
+}
+
+// RemoveDomainConfig elimina una configuración de dominio
+func (r *CSVDomainRepository) RemoveDomainConfig(domainName string) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	configs, err := r.getDomainConfigsUnsafe()
+	if err != nil {
+		return err
+	}
+
+	// Filtrar el dominio a eliminar y verificar que existe
+	found := false
+	var newConfigs []domain.DomainConfig
+
+	for _, config := range configs {
+		if config.Domain != domainName {
+			newConfigs = append(newConfigs, config)
+		} else {
+			found = true
+		}
+	}
+
+	// Si no se encontró el dominio, retornar error
+	if !found {
+		return fmt.Errorf("dominio '%s' no encontrado", domainName)
+	}
+
+	// Escribir configuraciones actualizadas
+	return r.writeConfigsUnsafe(newConfigs)
+}
+
+// UpdateDomainConfig actualiza una configuración existente
+func (r *CSVDomainRepository) UpdateDomainConfig(domainName string, newConfig domain.DomainConfig) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	configs, err := r.getDomainConfigsUnsafe()
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for i, config := range configs {
+		if config.Domain == domainName {
+			configs[i] = newConfig
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("dominio '%s' no encontrado", domainName)
+	}
+
+	return r.writeConfigsUnsafe(configs)
+}
+
+// UpdateDomainStatus actualiza solo el estado de un dominio
+func (r *CSVDomainRepository) UpdateDomainStatus(domainName string, status bool) error {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	configs, err := r.getDomainConfigsUnsafe()
+	if err != nil {
+		return err
+	}
+
+	found := false
+	for i, config := range configs {
+		if config.Domain == domainName {
+			configs[i].Status = status
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("dominio '%s' no encontrado", domainName)
+	}
+
+	return r.writeConfigsUnsafe(configs)
+}
+
+// SaveDomainCheck guarda un check de dominio
 func (r *CSVDomainRepository) SaveDomainCheck(check domain.DomainCheck) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
@@ -147,82 +370,20 @@ func (r *CSVDomainRepository) SaveDomainCheck(check domain.DomainCheck) error {
 	return writer.Write(record)
 }
 
+// GetChecks obtiene todos los checks
 func (r *CSVDomainRepository) GetChecks() ([]domain.DomainCheck, error) {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
-	file, err := os.Open(r.checksFile)
-	if err != nil {
-		return nil, fmt.Errorf("error abriendo archivo de checks: %v", err)
-	}
-	defer file.Close()
-
-	reader := csv.NewReader(file)
-	records, err := reader.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("error leyendo archivo CSV: %v", err)
-	}
-
-	var checks []domain.DomainCheck
-
-	// Saltar encabezado
-	for i, record := range records {
-		if i == 0 {
-			continue // Saltar encabezado
-		}
-
-		if len(record) >= 7 { // Cambié a 7 porque ahora tenemos 7 campos
-			// Parsear IPs desde JSON
-			var actualIPs []string
-			if err := json.Unmarshal([]byte(record[2]), &actualIPs); err != nil {
-				// Fallback: intentar parsear como string simple
-				if record[2] != "" && record[2] != "[]" {
-					actualIPs = []string{record[2]}
-				} else {
-					actualIPs = []string{}
-				}
-			}
-
-			// Parsear boolean
-			isValid, err := strconv.ParseBool(record[3])
-			if err != nil {
-				isValid = false
-			}
-
-			// Parsear timestamp
-			timestamp, err := time.Parse(time.RFC3339, record[5])
-			if err != nil {
-				timestamp = time.Now()
-			}
-
-			//Parsear DurationMs de string a int64
-			var durationMs float64
-			if len(record) > 6 && record[6] != "" {
-				durationMs, err = strconv.ParseFloat(record[6], 64)
-				if err != nil {
-					durationMs = 0.0 // Valor por defecto si hay error
-				}
-			}
-
-			check := domain.DomainCheck{
-				Domain:     record[0],
-				ExpectedIP: record[1],
-				ActualIPs:  actualIPs,
-				IsValid:    isValid,
-				Error:      record[4],
-				Timestamp:  timestamp,
-				DurationMs: durationMs,
-			}
-			checks = append(checks, check)
-		}
-	}
-
-	return checks, nil
+	return r.getChecksUnsafe()
 }
 
 // GetChecksByDomain obtiene los checks filtrados por dominio
 func (r *CSVDomainRepository) GetChecksByDomain(domainName string) ([]domain.DomainCheck, error) {
-	allChecks, err := r.GetChecks()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	allChecks, err := r.getChecksUnsafe()
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +400,10 @@ func (r *CSVDomainRepository) GetChecksByDomain(domainName string) ([]domain.Dom
 
 // GetRecentChecks obtiene los últimos N checks
 func (r *CSVDomainRepository) GetRecentChecks(limit int) ([]domain.DomainCheck, error) {
-	allChecks, err := r.GetChecks()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	allChecks, err := r.getChecksUnsafe()
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +422,10 @@ func (r *CSVDomainRepository) GetRecentChecks(limit int) ([]domain.DomainCheck, 
 
 // GetChecksByTimeRange obtiene checks dentro de un rango de tiempo
 func (r *CSVDomainRepository) GetChecksByTimeRange(start, end time.Time) ([]domain.DomainCheck, error) {
-	allChecks, err := r.GetChecks()
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	allChecks, err := r.getChecksUnsafe()
 	if err != nil {
 		return nil, err
 	}
@@ -274,71 +441,23 @@ func (r *CSVDomainRepository) GetChecksByTimeRange(start, end time.Time) ([]doma
 	return filteredChecks, nil
 }
 
-// AddDomainConfig agrega una nueva configuración de dominio
-func (r *CSVDomainRepository) AddDomainConfig(config domain.DomainConfig) error {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	file, err := os.OpenFile(r.configsFile, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("error abriendo archivo de configuraciones: %v", err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	record := []string{config.Domain, config.ExpectedIP}
-	return writer.Write(record)
-}
-
-// RemoveDomainConfig elimina una configuración de dominio
-func (r *CSVDomainRepository) RemoveDomainConfig(domainName string) error {
-	r.mutex.Lock()
-	defer r.mutex.Unlock()
-
-	configs, err := r.GetDomainConfigs()
-	if err != nil {
-		return err
-	}
-
-	// Filtrar el dominio a eliminar
-	var newConfigs []domain.DomainConfig
-	for _, config := range configs {
-		if config.Domain != domainName {
-			newConfigs = append(newConfigs, config)
-		}
-	}
-
-	// Reescribir archivo completo
-	file, err := os.Create(r.configsFile)
-	if err != nil {
-		return fmt.Errorf("error creando archivo de configuraciones: %v", err)
-	}
-	defer file.Close()
-
-	writer := csv.NewWriter(file)
-	defer writer.Flush()
-
-	// Escribir encabezado
-	writer.Write([]string{"domain", "expected_ip"})
-
-	// Escribir configuraciones actualizadas
-	for _, config := range newConfigs {
-		record := []string{config.Domain, config.ExpectedIP}
-		if err := writer.Write(record); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 // GetDomainStats obtiene estadísticas de un dominio específico
 func (r *CSVDomainRepository) GetDomainStats(domainName string) (domain.StatsDomain, error) {
-	checks, err := r.GetChecksByDomain(domainName)
+	r.mutex.RLock()
+	defer r.mutex.RUnlock()
+
+	// Usar método unsafe ya que tenemos el lock
+	allChecks, err := r.getChecksUnsafe()
 	if err != nil {
 		return domain.StatsDomain{}, err
+	}
+
+	// Filtrar por dominio
+	var checks []domain.DomainCheck
+	for _, check := range allChecks {
+		if check.Domain == domainName {
+			checks = append(checks, check)
+		}
 	}
 
 	if len(checks) == 0 {

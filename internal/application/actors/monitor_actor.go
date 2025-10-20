@@ -113,18 +113,42 @@ func (m *MonitorActor) triggerDomainChecks(c *actor.Context) {
 	}
 }
 
-func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
+func (m *MonitorActor) getActiveCheckers() map[string]*actor.PID {
 	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	domainCheckersCopy := make(map[string]*actor.PID, len(m.domainCheckers))
-	maps.Copy(domainCheckersCopy, m.domainCheckers)
+	// Crear copia del mapa
+	checkersCopy := make(map[string]*actor.PID, len(m.domainCheckers))
+	maps.Copy(checkersCopy, m.domainCheckers)
 
-	m.mu.RUnlock()
+	return checkersCopy
+}
+
+func (m *MonitorActor) isCheckerActive(domain string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	_, exists := m.domainCheckers[domain]
+	return exists
+}
+
+func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
+	if !m.monitoring {
+		slog.Warn("Monitoring not active, no stats available")
+		if c.Sender() != nil {
+			c.Send(c.Sender(), AllCachedStatsResponse{
+				Stats: []*domain.StatsDomain{},
+			})
+		}
+		return
+	}
+
+	domainCheckersCopy := m.getActiveCheckers()
 
 	slog.Debug("Collecting cached stats from all domain checkers",
-		"total_domains", len(m.domainCheckers))
+		"total_domains", len(domainCheckersCopy))
 
-	if len(m.domainCheckers) == 0 {
+	if len(domainCheckersCopy) == 0 {
 		slog.Warn("No domain checkers available")
 		if c.Sender() != nil {
 			c.Send(c.Sender(), AllCachedStatsResponse{
@@ -135,27 +159,42 @@ func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
 	}
 
 	statsMap := []*domain.StatsDomain{}
+
 	type domainResponse struct {
 		domain   string
 		response CachedStatsResponse
+		err      error
 	}
+
 	responseChan := make(chan domainResponse, len(domainCheckersCopy))
 
 	for domainName, pid := range domainCheckersCopy {
 		domain := domainName
 
 		go func(d string, p *actor.PID) {
-			response := c.Request(p, GetCachedStats{}, 1*time.Second)
+			if !m.isCheckerActive(d) {
+				slog.Debug("Checker no longer active, skipping",
+					"domain", d)
+				responseChan <- domainResponse{
+					domain:   d,
+					response: CachedStatsResponse{Found: false},
+					err:      fmt.Errorf("checker not active"),
+				}
+				return
+			}
+
+			response := c.Request(p, GetCachedStats{}, 500*time.Millisecond)
 
 			result, err := response.Result()
 
 			if err != nil {
-				slog.Warn("Error requesting stats",
+				slog.Debug("Error requesting stats (checker may be stopped)",
 					"domain", d,
 					"error", err)
 				responseChan <- domainResponse{
 					domain:   d,
 					response: CachedStatsResponse{Found: false},
+					err:      err,
 				}
 				return
 			}
@@ -164,6 +203,7 @@ func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
 				responseChan <- domainResponse{
 					domain:   d,
 					response: cachedStats,
+					err:      nil,
 				}
 			} else {
 				slog.Warn("Invalid response type",
@@ -172,19 +212,31 @@ func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
 				responseChan <- domainResponse{
 					domain:   d,
 					response: CachedStatsResponse{Found: false},
+					err:      fmt.Errorf("invalid response type"),
 				}
 			}
 		}(domain, pid)
 	}
 
 	// Recolectar respuestas con timeout global
-	timeout := time.After(3 * time.Second)
+	timeout := time.After(2 * time.Second)
 	collected := 0
-	expectedCount := len(m.domainCheckers)
+	expectedCount := len(domainCheckersCopy)
+	skipped := 0
 
 	for collected < expectedCount {
 		select {
 		case result := <-responseChan:
+			collected++
+
+			if result.err != nil {
+				skipped++
+				slog.Debug("Skipping domain due to error",
+					"domain", result.domain,
+					"error", result.err)
+				continue
+			}
+
 			if result.response.Found && result.response.Stats != nil {
 				statsMap = append(statsMap, result.response.Stats)
 				slog.Debug("Stats collected",
@@ -193,7 +245,6 @@ func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
 			} else {
 				slog.Debug("No stats available for domain", "domain", result.domain)
 			}
-			collected++
 
 		case <-timeout:
 			slog.Warn("Timeout collecting cached stats",
@@ -207,7 +258,8 @@ func (m *MonitorActor) handleGetAllCachedStats(c *actor.Context) {
 sendResponse:
 	slog.Info("Cached stats collection complete",
 		"domains_with_stats", len(statsMap),
-		"total_domains", expectedCount)
+		"total_domains", expectedCount,
+		"skipped", skipped)
 
 	if c.Sender() != nil {
 		c.Send(c.Sender(), AllCachedStatsResponse{Stats: statsMap})
@@ -286,6 +338,7 @@ func (m *MonitorActor) sendMonitoringNotification(c *actor.Context) {
 func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 	if m.monitoring && m.cancelFunc != nil {
 		slog.Info("Stopping domain monitoring")
+
 		m.monitoring = false
 
 		m.cancelFunc()
@@ -294,10 +347,12 @@ func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 		m.mu.Lock()
 		domainCheckersCopy := make(map[string]*actor.PID, len(m.domainCheckers))
 		maps.Copy(domainCheckersCopy, m.domainCheckers)
+
 		m.domainCheckers = make(map[string]*actor.PID)
 		m.mu.Unlock()
 
-		for _, pid := range domainCheckersCopy {
+		for domain, pid := range domainCheckersCopy {
+			slog.Debug("Poisoning domain checker", "domain", domain)
 			c.Engine().Poison(pid)
 		}
 
@@ -311,7 +366,6 @@ func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 			})
 		}
 	} else if c.Sender() != nil {
-
 		c.Send(c.Sender(), domain.MonitoringStatus{
 			IsRunning: false,
 			Interval:  0,
@@ -321,13 +375,22 @@ func (m *MonitorActor) handleStopMonitoring(c *actor.Context) {
 }
 
 func (m *MonitorActor) handleGetMonitoringStatus(c *actor.Context) {
+	// ✅ Usar lock para leer el estado
+	m.mu.RLock()
+	isRunning := m.monitoring
+	interval := m.interval
+	startedAt := m.startedAt
+	activeCheckers := len(m.domainCheckers)
+	m.mu.RUnlock()
+
 	status := domain.MonitoringStatus{
-		IsRunning: m.monitoring,
-		Interval:  m.interval,
+		IsRunning: isRunning,
+		Interval:  interval,
 	}
 
-	if m.monitoring {
-		status.StartedAt = m.startedAt
+	if isRunning {
+		status.StartedAt = startedAt
+		status.Message = fmt.Sprintf("Monitoring %d domains", activeCheckers)
 	}
 
 	c.Send(c.Sender(), status)
@@ -340,13 +403,20 @@ func (m *MonitorActor) monitoringLoop(c *actor.Context, ctx context.Context) {
 	for {
 		select {
 		case <-ticker.C:
-			if !m.monitoring {
+			m.mu.RLock()
+			shouldContinue := m.monitoring
+			m.mu.RUnlock()
+
+			if !shouldContinue {
+				slog.Debug("Monitoring loop detected stop signal")
 				return
 			}
+
 			slog.Debug("Monitoring tick - checking all domains")
 			c.Send(c.PID(), CheckAllDomains{})
 
 		case <-ctx.Done():
+			slog.Debug("Monitoring loop context cancelled")
 			return
 		}
 	}
