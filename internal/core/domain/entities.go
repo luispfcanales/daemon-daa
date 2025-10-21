@@ -20,6 +20,7 @@ type DomainCheck struct {
 }
 
 type DomainConfig struct {
+	ID         string `json:"id,omitempty"`
 	Domain     string `json:"dns,omitempty"`
 	ExpectedIP string `json:"expected_ip,omitempty"`
 	Status     bool   `json:"status"`

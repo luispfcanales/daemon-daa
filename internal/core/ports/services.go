@@ -6,5 +6,6 @@ type IPService interface {
 	GetStats(domain string) (map[string]any, error)
 	ListDomains() ([]domain.DomainConfig, error)
 	AddDomain(c domain.DomainConfig) error
-	DeleteDomain(domainName string) error
+	DeleteDomainIP(domainName string) error
+	UpdateDomainIP(up domain.DomainConfig) error
 }

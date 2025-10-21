@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/luispfcanales/daemon-daa/internal/core/domain"
 	"github.com/luispfcanales/daemon-daa/internal/core/ports"
 )
@@ -46,13 +47,21 @@ func (r *CSVDomainRepository) initializeFiles() {
 		defer writer.Flush()
 
 		// Escribir encabezados
-		writer.Write([]string{"domain", "expected_ip", "status"})
+		writer.Write([]string{
+			"domain",
+			"expected_ip",
+			"status",
+			"id",
+		})
 
 		// Datos iniciales
 		initialConfigs := [][]string{
-			{"intranet.unamad.edu.pe", "110.238.69.0", "false"},
-			{"aulavirtual.unamad.edu.pe", "110.238.69.0", "false"},
-			{"matricula.unamad.edu.pe", "110.238.69.0", "false"},
+			{
+				"intranet.unamad.edu.pe",
+				"110.238.69.0",
+				"false",
+				uuid.NewString(),
+			},
 		}
 
 		for _, config := range initialConfigs {
@@ -98,9 +107,10 @@ func (r *CSVDomainRepository) getDomainConfigsUnsafe() ([]domain.DomainConfig, e
 			continue // Saltar encabezado
 		}
 
-		if len(record) >= 3 {
+		if len(record) >= 4 {
 			status := record[2] == "true"
 			config := domain.DomainConfig{
+				ID:         record[3],
 				Domain:     record[0],
 				ExpectedIP: record[1],
 				Status:     status,
@@ -124,21 +134,23 @@ func (r *CSVDomainRepository) writeConfigsUnsafe(configs []domain.DomainConfig) 
 	defer writer.Flush()
 
 	// Escribir encabezado
-	if err := writer.Write([]string{"domain", "expected_ip", "status"}); err != nil {
+	if err := writer.Write([]string{
+		"domain",
+		"expected_ip",
+		"status",
+		"id",
+	}); err != nil {
 		return fmt.Errorf("error escribiendo encabezado: %v", err)
 	}
 
 	// Escribir configuraciones
 	for _, config := range configs {
-		statusStr := "false"
-		if config.Status {
-			statusStr = "true"
-		}
 
 		record := []string{
 			config.Domain,
 			config.ExpectedIP,
-			statusStr,
+			strconv.FormatBool(config.Status),
+			config.ID,
 		}
 
 		if err := writer.Write(record); err != nil {
@@ -285,7 +297,7 @@ func (r *CSVDomainRepository) RemoveDomainConfig(domainName string) error {
 }
 
 // UpdateDomainConfig actualiza una configuración existente
-func (r *CSVDomainRepository) UpdateDomainConfig(domainName string, newConfig domain.DomainConfig) error {
+func (r *CSVDomainRepository) UpdateDomainConfig(key string, newConfig domain.DomainConfig) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 
@@ -296,7 +308,7 @@ func (r *CSVDomainRepository) UpdateDomainConfig(domainName string, newConfig do
 
 	found := false
 	for i, config := range configs {
-		if config.Domain == domainName {
+		if config.ID == key {
 			configs[i] = newConfig
 			found = true
 			break
@@ -304,7 +316,7 @@ func (r *CSVDomainRepository) UpdateDomainConfig(domainName string, newConfig do
 	}
 
 	if !found {
-		return fmt.Errorf("dominio '%s' no encontrado", domainName)
+		return fmt.Errorf("dominio '%s' no encontrado", key)
 	}
 
 	return r.writeConfigsUnsafe(configs)

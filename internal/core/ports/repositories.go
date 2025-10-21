@@ -16,4 +16,5 @@ type DomainRepository interface {
 	AddDomainConfig(config domain.DomainConfig) error
 	RemoveDomainConfig(domain string) error
 	GetDomainStats(domain string) (domain.StatsDomain, error)
+	UpdateDomainConfig(key string, newConfig domain.DomainConfig) error
 }
