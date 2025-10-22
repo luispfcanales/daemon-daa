@@ -63,7 +63,7 @@ func (h *APIHandler) AddDomain(w http.ResponseWriter, r *http.Request) {
 func (h *APIHandler) UpdateDomain(w http.ResponseWriter, r *http.Request) {
 	key := r.PathValue("id")
 	if key == "" {
-		h.sendError(w, "Dominio no especificado", http.StatusBadRequest)
+		h.sendError(w, "id no especificado", http.StatusBadRequest)
 		return
 	}
 
