@@ -11,6 +11,11 @@ type NotifyStats struct {
 	Stats domain.StatsDomain `json:"stats,omitempty"`
 }
 
+type NotifySMS struct {
+	Number  string `json:"number"`
+	Message string `json:"message"`
+}
+
 // CheckAllDomains  messages actor monitoring
 type CheckAllDomains struct{}
 

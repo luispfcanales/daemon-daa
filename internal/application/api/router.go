@@ -48,6 +48,9 @@ func (r *Router) SetupRoutes() *http.ServeMux {
 	mux.HandleFunc("DELETE /domain/delete/{dns}", r.handler.DeleteDomain)
 	mux.HandleFunc("PUT /domain/update/{id}", r.handler.UpdateDomain)
 
+	//Notify SMS
+	mux.HandleFunc("POST /notify/sms", r.handler.handleSendSMS)
+
 	// Ruta por defecto
 	mux.HandleFunc("/", r.handler.NotFound)
 
