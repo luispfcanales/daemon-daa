@@ -40,5 +40,8 @@ type EmailConfig struct {
 	From     string
 }
 
-// Now retorna el tiempo actual (puede ser mockeado en tests)
-var Now = time.Now
+// NotificationEmail representa un correo para notificaciones
+type NotificationEmail struct {
+	Email     string `json:"email"`
+	CreatedAt string `json:"created_at,omitempty"`
+}

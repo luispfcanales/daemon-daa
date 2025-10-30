@@ -16,7 +16,7 @@ type EmailService struct {
 }
 
 // NewEmailService crea una nueva instancia del servicio de email
-func NewEmailService(cfg *domain.EmailConfig) ports.EmailService {
+func NewEmailService(cfg *domain.EmailConfig) ports.IEmailService {
 	smtpAdapter := email.NewSMTPAdapter(cfg)
 	return &EmailService{
 		smtpAdapter: smtpAdapter,

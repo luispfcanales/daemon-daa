@@ -51,6 +51,9 @@ func (r *Router) SetupRoutes() *http.ServeMux {
 	//Notify SMS
 	mux.HandleFunc("POST /notify/sms", r.handler.handleSendSMS)
 
+	//email manager
+	mux.HandleFunc("POST /email/sender-config", r.handler.handleSendSMS)
+
 	// Ruta por defecto
 	mux.HandleFunc("/", r.handler.NotFound)
 

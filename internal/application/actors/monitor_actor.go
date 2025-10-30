@@ -17,7 +17,7 @@ import (
 
 type MonitorActor struct {
 	repository      ports.DomainRepository
-	emailService    ports.EmailService
+	emailService    ports.IEmailService
 	monitoring      bool
 	interval        time.Duration
 	cancelFunc      context.CancelFunc
@@ -31,7 +31,7 @@ type MonitorActor struct {
 func NewMonitorActor(
 	repo ports.DomainRepository,
 	eventBus *events.EventBus,
-	emailService ports.EmailService,
+	emailService ports.IEmailService,
 	recipients []string,
 ) actor.Producer {
 	return func() actor.Receiver {
