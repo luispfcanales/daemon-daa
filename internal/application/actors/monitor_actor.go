@@ -16,32 +16,29 @@ import (
 )
 
 type MonitorActor struct {
-	repository      ports.DomainRepository
-	emailService    ports.IEmailService
-	monitoring      bool
-	interval        time.Duration
-	cancelFunc      context.CancelFunc
-	eventBus        *events.EventBus
-	startedAt       time.Time
-	recipientsEmail []string
-	domainCheckers  map[string]*actor.PID
-	mu              sync.RWMutex
+	repository     ports.DomainRepository
+	emailService   ports.IEmailService
+	monitoring     bool
+	interval       time.Duration
+	cancelFunc     context.CancelFunc
+	eventBus       *events.EventBus
+	startedAt      time.Time
+	domainCheckers map[string]*actor.PID
+	mu             sync.RWMutex
 }
 
 func NewMonitorActor(
 	repo ports.DomainRepository,
 	eventBus *events.EventBus,
 	emailService ports.IEmailService,
-	recipients []string,
 ) actor.Producer {
 	return func() actor.Receiver {
 		return &MonitorActor{
-			repository:      repo,
-			eventBus:        eventBus,
-			emailService:    emailService,
-			startedAt:       time.Time{},
-			recipientsEmail: recipients,
-			domainCheckers:  make(map[string]*actor.PID),
+			repository:     repo,
+			eventBus:       eventBus,
+			emailService:   emailService,
+			startedAt:      time.Time{},
+			domainCheckers: make(map[string]*actor.PID),
 		}
 	}
 }
@@ -304,8 +301,8 @@ func (m *MonitorActor) handleStartMonitoring(c *actor.Context, msg StartMonitori
 }
 
 func (m *MonitorActor) sendMonitoringNotification(c *actor.Context) {
-	if m.emailService == nil || len(m.recipientsEmail) == 0 {
-		slog.Warn("Email service not configured or no recipients, skipping notification")
+	if m.emailService == nil {
+		slog.Warn("Email service not configured, skipping notification")
 		return
 	}
 
@@ -322,7 +319,7 @@ func (m *MonitorActor) sendMonitoringNotification(c *actor.Context) {
 	}
 
 	go func() {
-		err := m.emailService.SendMonitoringNotification(m.recipientsEmail, status)
+		err := m.emailService.SendMonitoringNotification(status)
 		if err != nil {
 			slog.Error("Error sending monitoring start notification", "error", err)
 			c.Send(c.PID(), Alert{

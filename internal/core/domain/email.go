@@ -33,11 +33,13 @@ type MonitoringStatus struct {
 
 // EmailConfig configuración para el servicio de email
 type EmailConfig struct {
-	Host     string
-	Port     int
-	Username string
-	Password string
-	From     string
+	Host             string `json:"host,omitempty"`
+	Port             int    `json:"port,omitempty"`
+	Email            string `json:"email,omitempty"`
+	GmailAppPassword string `json:"gmail_app_password,omitempty"`
+	From             string `json:"from,omitempty"`
+	CreatedAt        string `json:"created_at,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
 // NotificationEmail representa un correo para notificaciones

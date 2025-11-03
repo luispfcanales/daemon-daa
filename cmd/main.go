@@ -112,14 +112,16 @@ func runApplication(ctx context.Context) error {
 	}
 
 	//config to email services
-	emailConfig := &domain.EmailConfig{
-		Host:     "smtp.gmail.com",
-		Port:     587,
-		Username: "luispfcanales@gmail.com",
-		Password: "wsyqurxxvuxrlxoc",
-		From:     "luispfcanales@gmail.com",
-	}
-	emailService := services.NewEmailService(emailConfig)
+	emailService := services.NewEmailService(
+		&domain.EmailConfig{
+			Host: "smtp.gmail.com",
+			Port: 587,
+			// Username: "luispfcanales@gmail.com",
+			// Password: "wsyqurxxvuxrlxoc",
+			// From:     "luispfcanales@gmail.com",
+		},
+		exeDir,
+	)
 
 	// Crear actores
 	monitorPID := engine.Spawn(
@@ -127,7 +129,6 @@ func runApplication(ctx context.Context) error {
 			repocsv,
 			eventBus,
 			emailService,
-			[]string{"lpfunoc@unamad.edu.pe"},
 		),
 		"monitor",
 	)

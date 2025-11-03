@@ -71,7 +71,7 @@ func (a *SMTPAdapter) Send(to []string, subject, body string, isHTML bool) error
 	message += "\r\n" + body
 
 	// Autenticación
-	auth := smtp.PlainAuth("", a.config.Username, a.config.Password, a.config.Host)
+	auth := smtp.PlainAuth("", a.config.Email, a.config.GmailAppPassword, a.config.Host)
 
 	return a.sendMail(to, []byte(message), auth)
 }

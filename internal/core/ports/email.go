@@ -6,21 +6,18 @@ import (
 
 // IEmailService es el puerto para el servicio de email
 type IEmailService interface {
-	SendEmail(to []string, subject, body string, isHTML bool) error
-	SendMonitoringNotification(to []string, status domain.MonitoringStatus) error
+	SendEmail(subject, body string, isHTML bool) error
+	SendMonitoringNotification(status domain.MonitoringStatus) error
+	//config email sender
+	GetSenderConfig() (*domain.EmailConfig, error)
+	SaveSenderConfig(config *domain.EmailConfig) error
+	GetNotificationEmails() ([]*domain.NotificationEmail, error)
+	AddNotificationEmail(email string) error
+	RemoveNotificationEmail(email string) error
 }
 
 // EmailTemplateEngine es el puerto para generación de templates
 type EmailTemplateEngine interface {
 	GenerateMonitoringTemplate(status domain.MonitoringStatus) (html, plainText string)
 	GenerateAlertTemplate(alertType, message string) (html, plainText string)
-}
-
-type IEmailConfigService interface {
-	GetSenderConfig() (*domain.EmailConfig, error)
-	SaveSenderConfig(config *domain.EmailConfig) error
-	GetNotificationEmails() ([]*domain.NotificationEmail, error)
-	AddNotificationEmail(email string) error
-	RemoveNotificationEmail(email string) error
-	TestEmailConnection(config *domain.EmailConfig) error
 }
