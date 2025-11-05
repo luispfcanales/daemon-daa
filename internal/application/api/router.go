@@ -19,6 +19,7 @@ func NewRouter(
 	iisService *services.IISService,
 	eventBus *events.EventBus,
 	ipService ports.IPService,
+	emailService ports.IEmailService,
 ) *Router {
 	return &Router{
 		handler: NewAPIHandler(
@@ -27,6 +28,7 @@ func NewRouter(
 			iisService,
 			eventBus,
 			ipService,
+			emailService,
 		),
 	}
 }
@@ -51,8 +53,12 @@ func (r *Router) SetupRoutes() *http.ServeMux {
 	//Notify SMS
 	mux.HandleFunc("POST /notify/sms", r.handler.handleSendSMS)
 
-	//email manager
-	mux.HandleFunc("POST /email/sender-config", r.handler.handleSendSMS)
+	// Rutas de Email (siguiendo el mismo patrón que DNS)
+	mux.HandleFunc("GET /api/email/sender-config", r.handler.GetSenderConfig)
+	mux.HandleFunc("POST /api/email/sender-config", r.handler.UpdateSenderConfig)
+	mux.HandleFunc("GET /api/email/notification-emails", r.handler.GetNotificationEmails)
+	mux.HandleFunc("POST /api/email/notification-emails", r.handler.AddNotificationEmail)
+	mux.HandleFunc("DELETE /api/email/notification-emails", r.handler.RemoveNotificationEmail)
 
 	// Ruta por defecto
 	mux.HandleFunc("/", r.handler.NotFound)

@@ -144,6 +144,7 @@ func runApplication(ctx context.Context) error {
 		iisService,
 		eventBus,
 		ipService,
+		emailService,
 	)
 	mux := router.SetupRoutes()
 

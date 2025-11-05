@@ -19,11 +19,12 @@ import (
 )
 
 type APIHandler struct {
-	engine     *actor.Engine
-	monitorPID *actor.PID
-	iisService *services.IISService
-	eventBus   *events.EventBus
-	ipService  ports.IPService
+	engine       *actor.Engine
+	monitorPID   *actor.PID
+	iisService   *services.IISService
+	eventBus     *events.EventBus
+	ipService    ports.IPService
+	emailService ports.IEmailService
 }
 
 func NewAPIHandler(
@@ -32,13 +33,15 @@ func NewAPIHandler(
 	iisService *services.IISService,
 	eventBus *events.EventBus,
 	ipService ports.IPService,
+	emailService ports.IEmailService,
 ) *APIHandler {
 	return &APIHandler{
-		engine:     engine,
-		monitorPID: monitorPID,
-		iisService: iisService,
-		eventBus:   eventBus,
-		ipService:  ipService,
+		engine:       engine,
+		monitorPID:   monitorPID,
+		iisService:   iisService,
+		eventBus:     eventBus,
+		ipService:    ipService,
+		emailService: emailService,
 	}
 }
 
